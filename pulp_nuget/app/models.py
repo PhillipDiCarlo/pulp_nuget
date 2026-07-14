@@ -100,5 +100,11 @@ class NugetDistribution(Distribution):
 
     TYPE = "nuget"
 
+    def content_handler(self, path):
+        """Serve the NuGet v3 API (service index, flatcontainer, registrations)."""
+        from pulp_nuget.app import v3_api
+
+        return v3_api.handle(self, path)
+
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"

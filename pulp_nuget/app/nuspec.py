@@ -56,6 +56,32 @@ def canonical_version(version):
     return normalize_version(version).lower()
 
 
+def version_sort_key(version):
+    """
+    A sort key ordering versions by NuGet/SemVer2 precedence.
+
+    Numeric segments compare numerically, a prerelease sorts before its release, and
+    prerelease identifiers compare per SemVer rules (numeric identifiers numerically and
+    lower than alphanumeric ones).
+    """
+    match = _VERSION_RE.match(version.strip())
+    if not match:
+        # Sort unparsable versions first; never raise from a sort.
+        return ((-1, -1, -1, -1), (0, ()))
+    numbers = [int(n) for n in match.group("numbers").split(".")]
+    numbers += [0] * (4 - len(numbers))
+    prerelease = match.group("prerelease")
+    if prerelease is None:
+        prerelease_key = (1, ())
+    else:
+        identifiers = tuple(
+            (0, int(part), "") if part.isdigit() else (1, 0, part)
+            for part in prerelease.lower().split(".")
+        )
+        prerelease_key = (0, identifiers)
+    return (tuple(numbers), prerelease_key)
+
+
 def _local_name(element):
     """Tag name of an element with any XML namespace stripped."""
     return element.tag.rsplit("}", 1)[-1]
