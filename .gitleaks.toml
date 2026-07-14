@@ -1,0 +1,10 @@
+[allowlist]
+  description = "Allow specific test-keys."
+  paths = [
+  ]
+  regexes = [
+    '''AKIAIT2Z5TDYPX3ARJBA''',
+    '''REDACTED_TEST_SECRET''',
+    '''REDACTED_TEST_SECRET''',
+    '''REDACTED_TEST_SECRET''',
+  ]
