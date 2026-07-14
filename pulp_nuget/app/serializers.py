@@ -1,92 +1,154 @@
-"""
-Check `Plugin Writer's Guide`_ for more details.
-
-.. _Plugin Writer's Guide:
-    https://pulpproject.org/pulpcore/docs/dev/
-"""
+"""Serializers for the pulp_nuget plugin."""
 
 from gettext import gettext as _
 
 from rest_framework import serializers
 
+from pulpcore.plugin import models as core_models
 from pulpcore.plugin import serializers as platform
+from pulpcore.plugin.util import get_domain_pk
 
 from . import models
+from .nuspec import InvalidNupkgError, parse_nupkg
 
 
-# FIXME: SingleArtifactContentSerializer might not be the right choice for you.
-# If your content type has no artifacts per content unit, use "NoArtifactContentSerializer".
-# If your content type has many artifacts per content unit, use "MultipleArtifactContentSerializer"
-# If you want create content through upload, use "SingleArtifactContentUploadSerializer"
-# If you change this, make sure to do so on "fields" below, also.
-# Make sure your choice here matches up with the create() method of your viewset.
-class NugetContentSerializer(platform.SingleArtifactContentSerializer):
+class NugetPackageSerializer(
+    platform.SingleArtifactContentUploadSerializer, platform.ContentChecksumSerializer
+):
     """
-    A Serializer for NugetContent.
+    A Serializer for NugetPackageContent.
 
-    Add serializers for the new fields defined in NugetContent and
-    add those fields to the Meta class keeping fields from the parent class as well.
+    All metadata is parsed server-side from the .nuspec inside the uploaded .nupkg;
+    the only inputs are the file (or artifact/upload/file_url) and optionally a repository.
+    """
 
-    For example::
+    # The nupkg location is derived from the parsed metadata, not user input.
+    relative_path = None
 
-    field1 = serializers.TextField()
-    field2 = serializers.IntegerField()
-    field3 = serializers.CharField()
+    package_id = serializers.CharField(help_text=_("The NuGet package id."), read_only=True)
+    version = serializers.CharField(
+        help_text=_("The package version as authored in the .nuspec."), read_only=True
+    )
+    version_normalized = serializers.CharField(
+        help_text=_("The lowercase NuGet-normalized SemVer2 version."), read_only=True
+    )
+    authors = serializers.CharField(read_only=True, allow_blank=True)
+    description = serializers.CharField(read_only=True, allow_blank=True)
+    title = serializers.CharField(read_only=True, allow_blank=True)
+    summary = serializers.CharField(read_only=True, allow_blank=True)
+    tags = serializers.CharField(read_only=True, allow_blank=True)
+    project_url = serializers.CharField(read_only=True, allow_blank=True)
+    icon_url = serializers.CharField(read_only=True, allow_blank=True)
+    license_expression = serializers.CharField(read_only=True, allow_blank=True)
+    license_file = serializers.CharField(read_only=True, allow_blank=True)
+    license_url = serializers.CharField(read_only=True, allow_blank=True)
+    require_license_acceptance = serializers.BooleanField(read_only=True)
+    min_client_version = serializers.CharField(read_only=True, allow_blank=True)
+    dependency_groups = serializers.JSONField(read_only=True)
+
+    def deferred_validate(self, data):
+        """Parse the .nuspec metadata out of the artifact."""
+        data = super().deferred_validate(data)
+
+        artifact = data["artifact"]
+        try:
+            with artifact.file.open("rb") as fp:
+                metadata = parse_nupkg(fp)
+        except InvalidNupkgError as exc:
+            raise serializers.ValidationError(
+                _("The file is not a valid NuGet package: {}").format(exc)
+            )
+
+        metadata["package_id_lower"] = metadata["package_id"].lower()
+        data.update(metadata)
+        return data
+
+    def retrieve(self, validated_data):
+        """Return an existing package with the same natural key if there is one."""
+        return models.NugetPackageContent.objects.filter(
+            package_id_lower=validated_data["package_id_lower"],
+            version_normalized=validated_data["version_normalized"],
+            pulp_domain=get_domain_pk(),
+        ).first()
+
+    def get_artifacts(self, validated_data):
+        """Map the artifact to its flat-container relative path."""
+        artifact = validated_data.pop("artifact")
+        relative_path = (
+            "{package_id_lower}/{version_normalized}/"
+            "{package_id_lower}.{version_normalized}.nupkg"
+        ).format(**validated_data)
+        return {relative_path: artifact}
 
     class Meta:
-        fields = platform.SingleArtifactContentSerializer.Meta.fields + (
-            'field1', 'field2', 'field3'
+        model = models.NugetPackageContent
+        fields = (
+            tuple(
+                f
+                for f in platform.SingleArtifactContentUploadSerializer.Meta.fields
+                if f != "relative_path"
+            )
+            + platform.ContentChecksumSerializer.Meta.fields
+            + (
+                "package_id",
+                "version",
+                "version_normalized",
+                "authors",
+                "description",
+                "title",
+                "summary",
+                "tags",
+                "project_url",
+                "icon_url",
+                "license_expression",
+                "license_file",
+                "license_url",
+                "require_license_acceptance",
+                "min_client_version",
+                "dependency_groups",
+            )
         )
-        model = models.NugetContent
-    """
-
-    class Meta:
-        fields = platform.SingleArtifactContentSerializer.Meta.fields
-        model = models.NugetContent
 
 
 class NugetRemoteSerializer(platform.RemoteSerializer):
     """
     A Serializer for NugetRemote.
-
-    Add any new fields if defined on NugetRemote.
-    Similar to the example above, in NugetContentSerializer.
-    Additional validators can be added to the parent validators list
-
-    For example::
-
-    class Meta:
-        validators = platform.RemoteSerializer.Meta.validators + [myValidator1, myValidator2]
-
-    By default the 'policy' field in platform.RemoteSerializer only validates the choice
-    'immediate'. To add on-demand support for more 'policy' options, e.g. 'streamed' or 'on_demand',
-    re-define the 'policy' option as follows::
-
-    policy = serializers.ChoiceField(
-        help_text="The policy to use when downloading content. The possible values include: "
-                  "'immediate', 'on_demand', and 'streamed'. 'immediate' is the default.",
-        choices=models.Remote.POLICY_CHOICES,
-        default=models.Remote.IMMEDIATE
-    )
     """
 
+    url = serializers.CharField(
+        help_text=_("The URL of a NuGet v3 service index, e.g. "
+                    "https://api.nuget.org/v3/index.json"),
+    )
+    policy = serializers.ChoiceField(
+        help_text=_(
+            "The policy to use when downloading content. The possible values include: "
+            "'immediate' and 'on_demand'. 'immediate' is the default."
+        ),
+        choices=[
+            (core_models.Remote.IMMEDIATE, "When syncing, download all metadata and content now."),
+            (
+                core_models.Remote.ON_DEMAND,
+                "When syncing, download metadata, but do not download content now. Instead, "
+                "download content as clients request it, and save it in Pulp to be served for "
+                "future client requests.",
+            ),
+        ],
+        default=core_models.Remote.IMMEDIATE,
+    )
+    includes = serializers.ListField(
+        child=serializers.CharField(),
+        help_text=_("A list of package ids to sync (case-insensitive)."),
+        default=list,
+    )
+
     class Meta:
-        fields = platform.RemoteSerializer.Meta.fields
+        fields = platform.RemoteSerializer.Meta.fields + ("includes",)
         model = models.NugetRemote
 
 
 class NugetRepositorySerializer(platform.RepositorySerializer):
     """
     A Serializer for NugetRepository.
-
-    Add any new fields if defined on NugetRepository.
-    Similar to the example above, in NugetContentSerializer.
-    Additional validators can be added to the parent validators list
-
-    For example::
-
-    class Meta:
-        validators = platform.RepositorySerializer.Meta.validators + [myValidator1, myValidator2]
     """
 
     class Meta:
@@ -94,53 +156,14 @@ class NugetRepositorySerializer(platform.RepositorySerializer):
         model = models.NugetRepository
 
 
-class NugetPublicationSerializer(platform.PublicationSerializer):
-    """
-    A Serializer for NugetPublication.
-
-    Add any new fields if defined on NugetPublication.
-    Similar to the example above, in NugetContentSerializer.
-    Additional validators can be added to the parent validators list
-
-    For example::
-
-    class Meta:
-        validators = platform.PublicationSerializer.Meta.validators + [myValidator1, myValidator2]
-    """
-
-    class Meta:
-        fields = platform.PublicationSerializer.Meta.fields
-        model = models.NugetPublication
-
-
 class NugetDistributionSerializer(platform.DistributionSerializer):
     """
     A Serializer for NugetDistribution.
 
-    Add any new fields if defined on NugetDistribution.
-    Similar to the example above, in NugetContentSerializer.
-    Additional validators can be added to the parent validators list
-
-    For example::
-
-    class Meta:
-        validators = platform.DistributionSerializer.Meta.validators + [
-            myValidator1, myValidator2]
+    The distribution serves a live NuGet v3 API from its repository; the service index is
+    available at ``<base_url>/v3/index.json``.
     """
 
-    publication = platform.DetailRelatedField(
-        required=False,
-        help_text=_("Publication to be served"),
-        view_name_pattern=r"publications(-.*/.*)?-detail",
-        queryset=models.Publication.objects.exclude(complete=False),
-        allow_null=True,
-    )
-
-    # uncomment these lines and remove the publication field if not using publications
-    # repository_version = RepositoryVersionRelatedField(
-    #     required=False, help_text=_("RepositoryVersion to be served"), allow_null=True
-    # )
-
     class Meta:
-        fields = platform.DistributionSerializer.Meta.fields + ("publication",)
+        fields = platform.DistributionSerializer.Meta.fields
         model = models.NugetDistribution
