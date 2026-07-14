@@ -105,11 +105,7 @@ def get_package_artifact(distribution, package_id_lower, version, filename):
     )
     if package is None:
         return None
-    return (
-        ContentArtifact.objects.select_related("artifact")
-        .filter(content=package)
-        .first()
-    )
+    return ContentArtifact.objects.select_related("artifact").filter(content=package).first()
 
 
 def _dependency_range(raw_range):

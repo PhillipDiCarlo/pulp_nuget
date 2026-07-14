@@ -122,7 +122,9 @@ class NugetFirstStage(Stage):
 
         package_ids = sorted({package_id.lower() for package_id in self.remote.includes})
         async with ProgressReport(
-            message="Fetching package registrations", code="sync.registrations", total=len(package_ids)
+            message="Fetching package registrations",
+            code="sync.registrations",
+            total=len(package_ids),
         ) as progress:
             for package_id in package_ids:
                 registration_url = f"{registrations_base}/{package_id}/index.json"

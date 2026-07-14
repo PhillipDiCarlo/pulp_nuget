@@ -75,8 +75,7 @@ class NugetPackageSerializer(
         """Map the artifact to its flat-container relative path."""
         artifact = validated_data.pop("artifact")
         relative_path = (
-            "{package_id_lower}/{version_normalized}/"
-            "{package_id_lower}.{version_normalized}.nupkg"
+            "{package_id_lower}/{version_normalized}/{package_id_lower}.{version_normalized}.nupkg"
         ).format(**validated_data)
         return {relative_path: artifact}
 
@@ -116,8 +115,9 @@ class NugetRemoteSerializer(platform.RemoteSerializer):
     """
 
     url = serializers.CharField(
-        help_text=_("The URL of a NuGet v3 service index, e.g. "
-                    "https://api.nuget.org/v3/index.json"),
+        help_text=_(
+            "The URL of a NuGet v3 service index, e.g. https://api.nuget.org/v3/index.json"
+        ),
     )
     policy = serializers.ChoiceField(
         help_text=_(
