@@ -44,7 +44,7 @@ legacy_component_name: "pulp_nuget"
 component_name: "nuget"
 component_version: "${COMPONENT_VERSION}"
 pulp_env: {}
-pulp_settings: {"api_root": "/pulp/"}
+pulp_settings: {"api_root": "/pulp/", "cache_enabled": false}
 pulp_scheme: "https"
 image:
   name: "pulp"

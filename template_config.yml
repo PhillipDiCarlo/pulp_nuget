@@ -40,6 +40,12 @@ pulp_env_s3: {}
 pulp_scheme: "https"
 pulp_settings:
   api_root: "/pulp/"
+  # Work around a pulpcore bug: the content-cache auth wrapper's finally block only
+  # expects content guards to raise HTTPForbidden. NugetContentGuard raises
+  # HTTPUnauthorized (needed for the 401 challenge real NuGet clients require), which
+  # trips an UnboundLocalError in pulpcore.content.handler.Handler.auth_cached and
+  # turns our 401 into a 500. Untested with caching on until that's fixed upstream.
+  cache_enabled: false
 pulp_settings_azure:
   MEDIA_ROOT: ""
   STORAGES:
