@@ -44,7 +44,7 @@ legacy_component_name: "pulp_nuget"
 component_name: "nuget"
 component_version: "${COMPONENT_VERSION}"
 pulp_env: {}
-pulp_settings: {"api_root": "/pulp/"}
+pulp_settings: {"api_root": "/pulp/", "cache_enabled": false}
 pulp_scheme: "https"
 image:
   name: "pulp"
@@ -71,7 +71,7 @@ VARSYAML
 
 if [ "$TEST" = "s3" ]; then
   MINIO_ACCESS_KEY=AKIAIT2Z5TDYPX3ARJBA
-  MINIO_SECRET_KEY=REDACTED_TEST_SECRET
+  MINIO_SECRET_KEY=fqRvjWaPU5o0fCqQuUWbj9Fainj2pVZtBCiDiieS
   cat >> .ci/ansible/vars/main.yaml << VARSYAML
   - name: "minio"
     image: "minio/minio"

@@ -1,0 +1,5 @@
+Sync validation now raises ``pulpcore.plugin.exceptions.SyncError`` instead of a bare
+``ValueError``. Task exceptions that aren't a ``PulpException``, DRF ``APIException``, or
+``aiohttp.ClientError`` are slated to be replaced with a generic internal-error message
+starting in pulpcore 3.130, which would have hidden these validation messages from API
+clients.

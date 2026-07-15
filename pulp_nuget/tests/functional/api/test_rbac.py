@@ -116,6 +116,7 @@ def test_nuget_content_guard_basic_challenge(
     distribution_url_factory,
     gen_user,
     gen_object_with_cleanup,
+    anon_session,
 ):
     """The nuget content guard 401-challenges anonymous clients and honors the download role."""
     newtonsoft_package_factory(repository=nuget_repo.pulp_href)
@@ -131,7 +132,7 @@ def test_nuget_content_guard_basic_challenge(
     )
 
     # Anonymous requests get the Basic challenge NuGet clients require to send credentials.
-    response = requests.get(index_url)
+    response = anon_session.get(index_url)
     assert response.status_code == 401
     assert response.headers.get("WWW-Authenticate", "").startswith("Basic")
 
@@ -156,6 +157,7 @@ def test_rbac_content_guard(
     gen_user,
     gen_object_with_cleanup,
     bindings_cfg,
+    anon_session,
 ):
     """An RBAC content guard restricts the whole v3 API to users with the download role."""
     newtonsoft_package_factory(repository=nuget_repo.pulp_href)
@@ -177,7 +179,7 @@ def test_rbac_content_guard(
         {"users": [reader.username], "role": "core.rbaccontentguard_downloader"},
     )
 
-    assert requests.get(index_url).status_code == 403
+    assert anon_session.get(index_url).status_code == 403
     assert requests.get(index_url, auth=(outsider.username, outsider.password)).status_code == 403
     for url in (index_url, nupkg_url):
         response = requests.get(url, auth=(reader.username, reader.password))

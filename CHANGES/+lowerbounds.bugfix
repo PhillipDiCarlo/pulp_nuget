@@ -1,0 +1,4 @@
+Raised the declared minimum pulpcore version to 3.106.0. Every content-app request
+calls ``Distribution.get_repository_publication_and_version()``, which does not exist
+before that release; the previous ``>=3.70.0`` bound let the plugin install against a
+pulpcore that would 500 on every request.

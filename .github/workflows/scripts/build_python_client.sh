@@ -40,8 +40,8 @@ site_name: PulpNuget Client
 site_description: Nuget bindings
 site_author: Pulp Team
 site_url: https://docs.pulpproject.org/pulp_nuget_client/
-repo_name: pulp/pulp_nuget
-repo_url: https://github.com/pulp/pulp_nuget
+repo_name: PhillipDiCarlo/pulp_nuget
+repo_url: https://github.com/PhillipDiCarlo/pulp_nuget
 theme: readthedocs
 DOCSYAML
 

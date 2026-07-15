@@ -3,6 +3,7 @@ import uuid
 import zipfile
 
 import pytest
+import requests
 
 from pulpcore.tests.functional.utils import BindingsNamespace
 
@@ -44,6 +45,21 @@ def nuget_distribution_factory(nuget_bindings, gen_object_with_cleanup):
 def newtonsoft_nupkg_path():
     """Filesystem path of the Newtonsoft.Json fixture package."""
     return NEWTONSOFT_NUPKG
+
+
+@pytest.fixture
+def anon_session():
+    """
+    A requests session that ignores ~/.netrc.
+
+    CI writes admin credentials to .netrc for the pulp host so pulp-cli and the
+    bindings can authenticate without extra config; plain ``requests`` calls pick
+    those up too unless trust_env is disabled, silently defeating anonymous-access
+    checks.
+    """
+    session = requests.Session()
+    session.trust_env = False
+    return session
 
 
 @pytest.fixture

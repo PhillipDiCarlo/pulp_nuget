@@ -11,7 +11,7 @@ from aiohttp import web
 from asgiref.sync import sync_to_async
 from django.conf import settings
 
-from pulpcore.content import app
+from pulpcore.plugin.content import app
 
 from pulp_nuget.app import v3_api
 from pulp_nuget.app.models import NugetDistribution

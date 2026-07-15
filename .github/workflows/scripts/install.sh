@@ -57,7 +57,7 @@ sudo update-ca-certificates
 echo ::endgroup::
 
 if [[ "$TEST" = "azure" ]]; then
-  AZURE_STORAGE_CONNECTION_STRING='DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=REDACTED_TEST_SECRET==;BlobEndpoint=http://ci-azurite:10000/devstoreaccount1;'
+  AZURE_STORAGE_CONNECTION_STRING='DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://ci-azurite:10000/devstoreaccount1;'
   az storage container create --name pulp-test --connection-string $AZURE_STORAGE_CONNECTION_STRING
 fi
 

@@ -36,10 +36,10 @@ jobs:
         run: |
           pip install bump-my-version towncrier
 
-      - name: "Configure Git with pulpbot name and email"
+      - name: "Configure Git with PhillipDiCarlo name and email"
         run: |
-          git config --global user.name 'pulpbot'
-          git config --global user.email 'pulp-infra@redhat.com'
+          git config --global user.name 'PhillipDiCarlo'
+          git config --global user.email 'sasha-1221@hotmail.com'
 
       - name: "Setting secrets"
         run: |

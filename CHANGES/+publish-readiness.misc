@@ -1,0 +1,3 @@
+Re-templated CI for the real GitHub org, disabled RubyGems client deploys, restored the
+executable bits on CI scripts (lost when the plugin template ran on Windows), and filled
+in the user and admin documentation.
