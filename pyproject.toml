@@ -35,8 +35,8 @@ dependencies = [
 Homepage = "https://github.com/PhillipDiCarlo/pulp_nuget"
 Documentation = "https://github.com/PhillipDiCarlo/pulp_nuget#readme"
 Repository = "https://github.com/PhillipDiCarlo/pulp_nuget"
-"Bug Tracker" = "https://github.com/pulp/pulp_nuget/issues"
-Changelog = "https://example.com/changes/"
+"Bug Tracker" = "https://github.com/PhillipDiCarlo/pulp_nuget/issues"
+Changelog = "https://github.com/PhillipDiCarlo/pulp_nuget/blob/main/CHANGES.md"
 
 
 [project.entry-points."pulpcore.plugin"]
