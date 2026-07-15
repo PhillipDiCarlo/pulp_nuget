@@ -30,3 +30,14 @@ dotnet restore
 ```
 
 Users without the role receive a `403` even with valid credentials.
+
+!!! warning "Known issue with `CACHE_ENABLED`"
+
+    If your Pulp instance runs with content caching enabled, anonymous requests to a
+    `NugetContentGuard`-protected distribution get a `500` instead of the intended
+    `401` challenge. This is a bug in pulpcore's content-cache authentication wrapper
+    (`Handler.auth_cached`): it only handles content guards that raise
+    `HTTPForbidden`, but our guard deliberately raises `HTTPUnauthorized` — which
+    pulpcore's own `Handler._permit` documents as a supported pattern for content
+    guards. Until that's fixed upstream, run with `CACHE_ENABLED = False` if you use
+    this guard.
