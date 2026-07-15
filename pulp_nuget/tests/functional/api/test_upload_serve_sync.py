@@ -170,6 +170,7 @@ def test_package_push(
     newtonsoft_nupkg_path,
     bindings_cfg,
     monitor_task,
+    anon_session,
 ):
     """A .nupkg can be pushed to the PackagePublish endpoint from the service index."""
     distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
@@ -184,7 +185,7 @@ def test_package_push(
 
     # Anonymous pushes are rejected.
     with open(newtonsoft_nupkg_path, "rb") as fp:
-        response = requests.put(publish_url, files={"package": fp})
+        response = anon_session.put(publish_url, files={"package": fp})
     assert response.status_code == 401
 
     # NuGet clients PUT with a trailing slash appended to the advertised URL.
@@ -248,6 +249,7 @@ def test_unlist_and_relist(
     nuget_distribution_factory,
     distribution_url_factory,
     bindings_cfg,
+    anon_session,
 ):
     """DELETE on the publish endpoint unlists a package; POST relists it."""
     newtonsoft_package_factory(repository=nuget_repo.pulp_href)
@@ -256,7 +258,7 @@ def test_unlist_and_relist(
     auth = (bindings_cfg.username, bindings_cfg.password)
     search_url = distribution_url_factory(distribution, "v3/search")
 
-    assert requests.delete(delete_url).status_code == 401
+    assert anon_session.delete(delete_url).status_code == 401
 
     try:
         assert requests.delete(delete_url, auth=auth).status_code == 204
