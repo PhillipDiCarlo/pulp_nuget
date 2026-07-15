@@ -6,10 +6,7 @@ from rest_framework.decorators import action
 
 from pulpcore.plugin import viewsets as core
 from pulpcore.plugin.actions import ModifyRepositoryActionMixin
-from pulpcore.plugin.serializers import (
-    AsyncOperationResponseSerializer,
-    RepositorySyncURLSerializer,
-)
+from pulpcore.plugin.serializers import AsyncOperationResponseSerializer
 from pulpcore.plugin.tasking import dispatch
 
 from . import models, serializers, tasks
@@ -251,18 +248,23 @@ class NugetRepositoryViewSet(core.RepositoryViewSet, ModifyRepositoryActionMixin
         summary="Sync from remote",
         responses={202: AsyncOperationResponseSerializer},
     )
-    @action(detail=True, methods=["post"], serializer_class=RepositorySyncURLSerializer)
+    @action(
+        detail=True,
+        methods=["post"],
+        serializer_class=serializers.NugetRepositorySyncURLSerializer,
+    )
     def sync(self, request, pk):
         """
         Dispatches a sync task.
         """
         repository = self.get_object()
-        serializer = RepositorySyncURLSerializer(
+        serializer = serializers.NugetRepositorySyncURLSerializer(
             data=request.data, context={"request": request, "repository_pk": pk}
         )
         serializer.is_valid(raise_exception=True)
         remote = serializer.validated_data.get("remote", repository.remote)
         mirror = serializer.validated_data.get("mirror", False)
+        optimize = serializer.validated_data.get("optimize", True)
 
         result = dispatch(
             tasks.synchronize,
@@ -272,6 +274,7 @@ class NugetRepositoryViewSet(core.RepositoryViewSet, ModifyRepositoryActionMixin
                 "remote_pk": str(remote.pk),
                 "repository_pk": str(repository.pk),
                 "mirror": mirror,
+                "optimize": optimize,
             },
         )
         return core.OperationPostponedResponse(result, request)

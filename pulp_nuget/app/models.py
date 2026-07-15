@@ -78,13 +78,17 @@ class NugetRemote(Remote, AutoAddObjPermsMixin):
     A Remote for syncing from an upstream NuGet v3 feed.
 
     The url must point to a v3 service index (e.g. https://api.nuget.org/v3/index.json).
-    Only packages listed in ``includes`` are synced.
+    Only packages listed in ``includes`` are synced; ``excludes`` filters them further.
+    Entries are package ids, optionally followed by a NuGet version range, e.g.
+    ``"Serilog"`` or ``"Serilog [2.0,3.0)"``.
     """
 
     TYPE = "nuget"
 
-    # List of package ids to mirror (case-insensitive).
+    # Package ids (case-insensitive) to mirror, each optionally "<id> <version-range>".
     includes = models.JSONField(default=list)
+    # Same syntax; matching packages are skipped even when includes matches them.
+    excludes = models.JSONField(default=list)
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
@@ -102,6 +106,9 @@ class NugetRepository(Repository, AutoAddObjPermsMixin):
 
     CONTENT_TYPES = [NugetPackageContent]
     REMOTE_TYPES = [NugetRemote]
+
+    # State of the last sync, used to skip syncs when nothing changed (like pulp_file).
+    last_sync_details = models.JSONField(default=dict)
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"

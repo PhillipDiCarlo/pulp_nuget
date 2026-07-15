@@ -162,6 +162,59 @@ def test_sync_from_nuget_org(
     assert response.content[:2] == b"PK"
 
 
+def test_sync_version_ranges_and_excludes(nuget_bindings, nuget_repo, remote_factory, sync):
+    """Includes may carry version ranges, and excludes filter matching versions out."""
+    remote = remote_factory(
+        includes=["Newtonsoft.Json.Bson [1.0.1, 1.0.2]"],
+        excludes=["Newtonsoft.Json.Bson [1.0.2]"],
+    )
+    sync(nuget_repo, remote)
+
+    repository = nuget_bindings.RepositoriesNugetApi.read(nuget_repo.pulp_href)
+    packages = nuget_bindings.ContentPackagesApi.list(
+        repository_version=repository.latest_version_href, limit=100
+    )
+    versions = {package.version_normalized for package in packages.results}
+    assert versions == {"1.0.1"}
+
+
+def test_sync_optimization(nuget_bindings, nuget_repo, remote_factory, sync, monitor_task):
+    """An unchanged remote and upstream skip the sync; optimize=False forces it."""
+    remote = remote_factory(includes=["Newtonsoft.Json.Bson [1.0.1, 1.0.2]"])
+
+    first = sync(nuget_repo, remote)
+    assert "sync.was_skipped" not in {report.code for report in first.progress_reports}
+    repository = nuget_bindings.RepositoriesNugetApi.read(nuget_repo.pulp_href)
+    assert repository.last_sync_details["registration_checksums"]
+
+    # Nothing changed: the second sync is skipped and creates no repository version.
+    second = sync(nuget_repo, remote)
+    assert "sync.was_skipped" in {report.code for report in second.progress_reports}
+    assert (
+        nuget_bindings.RepositoriesNugetApi.read(nuget_repo.pulp_href).latest_version_href
+        == repository.latest_version_href
+    )
+
+    # optimize=False forces a full pass even with no upstream change.
+    third = sync(nuget_repo, remote, optimize=False)
+    assert "sync.was_skipped" not in {report.code for report in third.progress_reports}
+
+    # Changing the remote's filters invalidates the optimization.
+    monitor_task(
+        nuget_bindings.RemotesNugetApi.partial_update(
+            remote.pulp_href, {"includes": ["Newtonsoft.Json.Bson [1.0.1, 1.0.3]"]}
+        ).task
+    )
+    fourth = sync(nuget_repo, remote)
+    assert "sync.was_skipped" not in {report.code for report in fourth.progress_reports}
+    repository = nuget_bindings.RepositoriesNugetApi.read(nuget_repo.pulp_href)
+    packages = nuget_bindings.ContentPackagesApi.list(
+        repository_version=repository.latest_version_href, limit=100
+    )
+    versions = {package.version_normalized for package in packages.results}
+    assert versions == {"1.0.1", "1.0.2", "1.0.3"}
+
+
 def test_package_push(
     nuget_bindings,
     nuget_repo,

@@ -16,9 +16,11 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
   generated live from the repository's latest version. No publish step is needed.
   Registration indexes page externally past 64 versions (like nuget.org), and
   search honors the `packageType` and `semVerLevel` query parameters.
-- **Sync** an allowlist of package ids (`includes`) from an upstream v3 service
+- **Sync** an allowlist of packages (`includes`) from an upstream v3 service
   index, with `immediate` or `on_demand` download policy. On-demand packages are
-  fetched from the upstream and cached on first client request.
+  fetched from the upstream and cached on first client request. Entries take
+  optional NuGet version ranges (`"Serilog [2.0,3.0)"`), an `excludes` list filters
+  further, and unchanged repeat syncs are skipped automatically.
 - **Push** packages with `dotnet nuget push`: each distribution advertises a
   `PackagePublish/2.0.0` resource that adds pushed packages to its repository.
   Pushing requires the `nuget.publish_nugetdistribution` permission (grant the
