@@ -170,6 +170,49 @@ def test_sync_from_nuget_org(
     assert response.content[:2] == b"PK"
 
 
+def test_package_push(
+    nuget_bindings,
+    nuget_repo,
+    nuget_distribution_factory,
+    distribution_url_factory,
+    newtonsoft_nupkg_path,
+    bindings_cfg,
+    monitor_task,
+):
+    """A .nupkg can be pushed to the PackagePublish endpoint from the service index."""
+    distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
+
+    response = requests.get(distribution_url_factory(distribution, "v3/index.json"))
+    response.raise_for_status()
+    publish_url = next(
+        resource["@id"]
+        for resource in response.json()["resources"]
+        if resource["@type"] == "PackagePublish/2.0.0"
+    )
+
+    # Anonymous pushes are rejected.
+    with open(newtonsoft_nupkg_path, "rb") as fp:
+        response = requests.put(publish_url, files={"package": fp})
+    assert response.status_code == 401
+
+    # NuGet clients PUT with a trailing slash appended to the advertised URL.
+    with open(newtonsoft_nupkg_path, "rb") as fp:
+        response = requests.put(
+            publish_url + "/",
+            files={"package": fp},
+            auth=(bindings_cfg.username, bindings_cfg.password),
+        )
+    assert response.status_code == 202, response.text
+    monitor_task(response.json()["task"])
+
+    repository = nuget_bindings.RepositoriesNugetApi.read(nuget_repo.pulp_href)
+    packages = nuget_bindings.ContentPackagesApi.list(
+        repository_version=repository.latest_version_href
+    )
+    assert packages.count == 1
+    assert packages.results[0].package_id == "Newtonsoft.Json"
+
+
 def test_sync_requires_includes(
     nuget_bindings, pulpcore_bindings, nuget_repo, gen_object_with_cleanup, monitor_task
 ):

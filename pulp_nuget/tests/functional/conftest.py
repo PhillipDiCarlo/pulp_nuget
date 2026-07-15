@@ -40,6 +40,12 @@ def nuget_distribution_factory(nuget_bindings, gen_object_with_cleanup):
 
 
 @pytest.fixture
+def newtonsoft_nupkg_path():
+    """Filesystem path of the Newtonsoft.Json fixture package."""
+    return NEWTONSOFT_NUPKG
+
+
+@pytest.fixture
 def newtonsoft_package_factory(nuget_bindings, monitor_task):
     """Upload the Newtonsoft.Json fixture .nupkg, optionally into a repository."""
 

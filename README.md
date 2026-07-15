@@ -17,6 +17,9 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
 - **Sync** an allowlist of package ids (`includes`) from an upstream v3 service
   index, with `immediate` or `on_demand` download policy. On-demand packages are
   fetched from the upstream and cached on first client request.
+- **Push** packages with `dotnet nuget push`: each distribution advertises a
+  `PackagePublish/2.0.0` resource that adds pushed packages to its repository
+  (authenticated users only; configure source credentials in `nuget.config`).
 - Content is identified by the natural key *(lowercase package id, lowercase
   NuGet-normalized SemVer2 version)*, so re-uploads and syncs deduplicate cleanly.
 
@@ -41,6 +44,12 @@ dotnet add package Newtonsoft.Json
 
 (For plain-http Pulp instances, the source needs `allowInsecureConnections="true"`
 in `nuget.config` with newer .NET SDKs.)
+
+Push a package (the source must be repository-backed and credentials configured):
+
+```bash
+dotnet nuget push my.package.1.0.0.nupkg --source pulp --api-key unused
+```
 
 Or mirror packages from nuget.org:
 

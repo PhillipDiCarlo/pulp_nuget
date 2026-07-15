@@ -44,6 +44,16 @@ def base_url(distribution):
     return "/".join(parts) + "/"
 
 
+def publish_url(distribution):
+    """The absolute URL of the PackagePublish resource for this distribution."""
+    origin = settings.CONTENT_ORIGIN.strip("/")
+    parts = [origin, "pulp_nuget/publish"]
+    if settings.DOMAIN_ENABLED:
+        parts.append(distribution.pulp_domain.name)
+    parts.append(distribution.base_path.strip("/"))
+    return "/".join(parts)
+
+
 def get_packages(distribution):
     """A queryset of the NugetPackageContent served by this distribution."""
     from pulp_nuget.app.models import NugetPackageContent
@@ -76,6 +86,7 @@ def service_index(distribution):
         {"@id": search, "@type": "SearchQueryService"},
         {"@id": search, "@type": "SearchQueryService/3.0.0-rc"},
         {"@id": search, "@type": "SearchQueryService/3.0.0-beta"},
+        {"@id": publish_url(distribution), "@type": "PackagePublish/2.0.0"},
     ]
     return {"version": "3.0.0", "resources": resources}
 
