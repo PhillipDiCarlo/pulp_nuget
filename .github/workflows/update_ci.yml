@@ -37,10 +37,10 @@ jobs:
         run: |
           pip install gitpython packaging -r plugin_template/requirements.txt
 
-      - name: "Configure Git with pulpbot name and email"
+      - name: "Configure Git with PhillipDiCarlo name and email"
         run: |
-          git config --global user.name 'pulpbot'
-          git config --global user.email 'pulp-infra@redhat.com'
+          git config --global user.name 'PhillipDiCarlo'
+          git config --global user.email 'sasha-1221@hotmail.com'
       - uses: "actions/checkout@v6"
         with:
           fetch-depth: 0
@@ -58,8 +58,8 @@ jobs:
         with:
           token: "${{ secrets.RELEASE_TOKEN }}"
           path: "pulp_nuget"
-          committer: "pulpbot <pulp-infra@redhat.com>"
-          author: "pulpbot <pulp-infra@redhat.com>"
+          committer: "PhillipDiCarlo <sasha-1221@hotmail.com>"
+          author: "PhillipDiCarlo <sasha-1221@hotmail.com>"
           title: "Update CI files for branch main"
           branch: "update-ci/main"
           base: "main"

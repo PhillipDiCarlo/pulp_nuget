@@ -16,12 +16,12 @@ cli_package: "pulp-cli"
 cli_repo: "https://github.com/pulp/pulp-cli.git"
 core_import_allowed: []
 deploy_client_to_pypi: true
-deploy_client_to_rubygems: true
+deploy_client_to_rubygems: false
 deploy_to_pypi: true
 disabled_redis_runners: []
 docker_fixtures: false
 extra_files: []
-github_org: "pulp"
+github_org: "PhillipDiCarlo"
 latest_release_branch: null
 lint_ignore: []
 lint_requirements: true
@@ -85,8 +85,8 @@ pulp_settings_s3:
       BACKEND: "django.contrib.staticfiles.storage.StaticFilesStorage"
   api_root: "/rerouted/djnd/"
   domain_enabled: true
-release_email: "pulp-infra@redhat.com"
-release_user: "pulpbot"
+release_email: "sasha-1221@hotmail.com"
+release_user: "PhillipDiCarlo"
 stalebot: true
 stalebot_days_until_close: 30
 stalebot_days_until_stale: 90

@@ -89,8 +89,8 @@ jobs:
         with:
           path: "pulp_nuget"
           token: "${{ secrets.RELEASE_TOKEN }}"
-          committer: "pulpbot <pulp-infra@redhat.com>"
-          author: "pulpbot <pulp-infra@redhat.com>"
+          committer: "PhillipDiCarlo <sasha-1221@hotmail.com>"
+          author: "PhillipDiCarlo <sasha-1221@hotmail.com>"
           branch: "minor-version-bump"
           base: "main"
           title: "Bump minor version"

@@ -71,7 +71,7 @@ VARSYAML
 
 if [ "$TEST" = "s3" ]; then
   MINIO_ACCESS_KEY=AKIAIT2Z5TDYPX3ARJBA
-  MINIO_SECRET_KEY=REDACTED_TEST_SECRET
+  MINIO_SECRET_KEY=fqRvjWaPU5o0fCqQuUWbj9Fainj2pVZtBCiDiieS
   cat >> .ci/ansible/vars/main.yaml << VARSYAML
   - name: "minio"
     image: "minio/minio"

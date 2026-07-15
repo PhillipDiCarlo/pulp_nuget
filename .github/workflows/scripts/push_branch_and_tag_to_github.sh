@@ -11,6 +11,6 @@ set -eu
 
 BRANCH_NAME="$(echo "$GITHUB_REF" | sed -rn 's/refs\/heads\/(.*)/\1/p')"
 
-remote_repo="https://pulpbot:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+remote_repo="https://PhillipDiCarlo:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
 git push "${remote_repo}" "$BRANCH_NAME" "$1"
