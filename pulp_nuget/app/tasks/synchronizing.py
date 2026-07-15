@@ -6,6 +6,7 @@ from gettext import gettext as _
 
 from aiohttp import ClientResponseError
 
+from pulpcore.plugin.exceptions import SyncError
 from pulpcore.plugin.models import Artifact, ProgressReport, Remote
 from pulpcore.plugin.stages import (
     DeclarativeArtifact,
@@ -43,9 +44,9 @@ def synchronize(remote_pk, repository_pk, mirror):
     repository = NugetRepository.objects.get(pk=repository_pk)
 
     if not remote.url:
-        raise ValueError(_("A remote must have a url specified to synchronize."))
+        raise SyncError(_("A remote must have a url specified to synchronize."))
     if not remote.includes:
-        raise ValueError(
+        raise SyncError(
             _("The remote must specify a non-empty 'includes' package allowlist to synchronize.")
         )
 
@@ -103,7 +104,7 @@ class NugetFirstStage(Stage):
         for type_ in REGISTRATION_TYPES:
             if type_ in by_type:
                 return by_type[type_]
-        raise ValueError(
+        raise SyncError(
             _("The service index at {} advertises no registrations resource.").format(
                 self.remote.url
             )
