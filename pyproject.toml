@@ -11,7 +11,7 @@ version = "0.0.0.dev"
 description = "pulp-nuget plugin for the Pulp Project"
 readme = "README.md"
 authors = [
-  {name="AUTHOR", email="author@email.here"},
+  {name="Phillip DiCarlo", email="sasha-1221@hotmail.com"},
 ]
 classifiers = [
   "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
@@ -26,13 +26,15 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-  "pulpcore>=3.70.0,<3.130",
+  # get_repository_publication_and_version(), used on every content-app request,
+  # was added to Distribution in pulpcore 3.106.0.
+  "pulpcore>=3.106.0,<3.130",
 ]
 
 [project.urls]
-Homepage = "https://example.com"
-Documentation = "https://example.com"
-Repository = "https://github.com/pulp/pulp_nuget"
+Homepage = "https://github.com/PhillipDiCarlo/pulp_nuget"
+Documentation = "https://github.com/PhillipDiCarlo/pulp_nuget#readme"
+Repository = "https://github.com/PhillipDiCarlo/pulp_nuget"
 "Bug Tracker" = "https://github.com/pulp/pulp_nuget/issues"
 Changelog = "https://example.com/changes/"
 
