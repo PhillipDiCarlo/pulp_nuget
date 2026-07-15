@@ -6,14 +6,6 @@ import pytest
 import requests
 
 
-@pytest.fixture
-def distribution_url_factory(pulp_content_url):
-    def _distribution_url(distribution, path):
-        return f"{pulp_content_url}{distribution.base_path}/{path}"
-
-    return _distribution_url
-
-
 def test_upload_parses_nuspec_metadata(newtonsoft_package_factory, monitor_task):
     """Uploading a real .nupkg parses the embedded .nuspec into content metadata."""
     package = newtonsoft_package_factory()

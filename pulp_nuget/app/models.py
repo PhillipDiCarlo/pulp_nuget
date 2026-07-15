@@ -2,9 +2,17 @@
 
 from logging import getLogger
 
+from django.conf import settings
 from django.db import models
 
-from pulpcore.plugin.models import Content, Distribution, Remote, Repository
+from pulpcore.plugin.models import (
+    AutoAddObjPermsMixin,
+    Content,
+    ContentGuard,
+    Distribution,
+    Remote,
+    Repository,
+)
 from pulpcore.plugin.util import get_domain_pk
 
 logger = getLogger(__name__)
@@ -65,7 +73,7 @@ class NugetPackageContent(Content):
         unique_together = ("package_id_lower", "version_normalized", "_pulp_domain")
 
 
-class NugetRemote(Remote):
+class NugetRemote(Remote, AutoAddObjPermsMixin):
     """
     A Remote for syncing from an upstream NuGet v3 feed.
 
@@ -80,9 +88,12 @@ class NugetRemote(Remote):
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
+        permissions = [
+            ("manage_roles_nugetremote", "Can manage roles on nuget remotes"),
+        ]
 
 
-class NugetRepository(Repository):
+class NugetRepository(Repository, AutoAddObjPermsMixin):
     """
     A Repository for NugetPackageContent.
     """
@@ -94,9 +105,55 @@ class NugetRepository(Repository):
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
+        permissions = [
+            ("sync_nugetrepository", "Can start a sync task"),
+            ("modify_nugetrepository", "Can modify content of the repository"),
+            ("manage_roles_nugetrepository", "Can manage roles on nuget repositories"),
+            ("repair_nugetrepository", "Can repair repository versions"),
+        ]
 
 
-class NugetDistribution(Distribution):
+class NugetContentGuard(ContentGuard, AutoAddObjPermsMixin):
+    """
+    A content guard for private NuGet feeds.
+
+    Works like pulpcore's RBAC content guard (download permission at the model, domain,
+    or object level), but challenges unauthenticated requests with a 401 and
+    ``WWW-Authenticate: Basic`` instead of a plain 403. NuGet clients (dotnet, nuget.exe,
+    MSBuild) only send the credentials configured in nuget.config after such a
+    challenge, so the stock RBAC guard cannot protect a feed they can restore from.
+    """
+
+    TYPE = "nuget"
+
+    def permit(self, request):
+        """Permit users with the download permission; challenge anonymous clients."""
+        drf_request = request.get("drf_request", None)
+        user = getattr(drf_request, "user", None)
+        if user is None or not user.is_authenticated:
+            # Not PermissionError: pulpcore would turn that into a 403, and NuGet
+            # clients only retry with credentials after a 401 Basic challenge.
+            from aiohttp.web_exceptions import HTTPUnauthorized
+
+            raise HTTPUnauthorized(
+                headers={"WWW-Authenticate": 'Basic realm="pulp_nuget", charset="UTF-8"'}
+            )
+        permission = "nuget.download_nugetcontentguard"
+        if user.has_perm(permission) or user.has_perm(permission, obj=self):
+            return
+        if settings.DOMAIN_ENABLED and user.has_perm(permission, obj=self.pulp_domain):
+            return
+        raise PermissionError("User is not authorized to download from this feed.")
+
+    class Meta:
+        default_related_name = "%(app_label)s_%(model_name)s"
+        permissions = [
+            ("download_nugetcontentguard", "Can download content protected by this guard"),
+            ("manage_roles_nugetcontentguard", "Can manage roles on nuget content guards"),
+        ]
+
+
+class NugetDistribution(Distribution, AutoAddObjPermsMixin):
     """
     A Distribution that serves a live NuGet v3 API for a repository.
 
@@ -114,3 +171,10 @@ class NugetDistribution(Distribution):
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
+        permissions = [
+            (
+                "publish_nugetdistribution",
+                "Can push, unlist, and relist packages via the distribution's publish endpoint",
+            ),
+            ("manage_roles_nugetdistribution", "Can manage roles on nuget distributions"),
+        ]

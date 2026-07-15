@@ -166,6 +166,16 @@ class NugetRepositorySerializer(platform.RepositorySerializer):
         model = models.NugetRepository
 
 
+class NugetContentGuardSerializer(platform.ContentGuardSerializer):
+    """
+    A Serializer for NugetContentGuard.
+    """
+
+    class Meta:
+        fields = platform.ContentGuardSerializer.Meta.fields
+        model = models.NugetContentGuard
+
+
 class NugetDistributionSerializer(platform.DistributionSerializer):
     """
     A Serializer for NugetDistribution.

@@ -6,7 +6,7 @@ from django.conf import settings
 from django.db import DatabaseError, IntegrityError
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -14,7 +14,7 @@ from rest_framework.views import APIView
 
 from pulpcore.plugin.models import Artifact
 from pulpcore.plugin.tasking import dispatch, general_create
-from pulpcore.plugin.util import get_domain, get_url
+from pulpcore.plugin.util import get_domain, get_url, set_domain
 
 from pulp_nuget.app import v3_api
 from pulp_nuget.app.models import NugetDistribution
@@ -30,7 +30,27 @@ def _get_distribution(base_path):
     distribution = NugetDistribution.objects.filter(**lookup).first()
     if distribution is None:
         raise NotFound(_("No NuGet distribution exists at '{}'.").format(base_path))
+    if settings.DOMAIN_ENABLED:
+        # The publish URL is not served under a domain-prefixed API path, so the request
+        # runs in the default-domain context. Everything downstream (artifact dedup and
+        # creation, task dispatch, general_create validation) must use the distribution's
+        # domain instead.
+        set_domain(distribution.pulp_domain)
     return distribution
+
+
+def _check_publish_permission(user, distribution):
+    """Require nuget.publish_nugetdistribution at the model, domain, or object level."""
+    permission = "nuget.publish_nugetdistribution"
+    if user.has_perm(permission) or user.has_perm(permission, obj=distribution):
+        return
+    if settings.DOMAIN_ENABLED and user.has_perm(permission, obj=distribution.pulp_domain):
+        return
+    raise PermissionDenied(
+        _("You do not have permission to publish to the distribution at '{}'.").format(
+            distribution.base_path
+        )
+    )
 
 
 class PackagePublishView(APIView):
@@ -48,6 +68,8 @@ class PackagePublishView(APIView):
 
     Authentication is HTTP basic; the X-NuGet-ApiKey header is deliberately ignored
     (clients require --api-key, any value works — credentials belong in nuget.config).
+    All three actions require the nuget.publish_nugetdistribution permission (model,
+    domain, or object level — e.g. via the nuget.nugetdistribution_publisher role).
     """
 
     parser_classes = [MultiPartParser]
@@ -59,6 +81,7 @@ class PackagePublishView(APIView):
         # NuGet clients PUT the advertised URL with a trailing slash appended.
         base_path = base_path.strip("/")
         distribution = _get_distribution(base_path)
+        _check_publish_permission(request.user, distribution)
         if distribution.repository is None:
             raise ValidationError(
                 _(
@@ -94,7 +117,7 @@ class PackagePublishView(APIView):
         # NuGet clients only need the 202; the task href is for API consumers and tests.
         return Response({"task": get_url(task)}, status=status.HTTP_202_ACCEPTED)
 
-    def _find_package(self, base_path):
+    def _find_package(self, request, base_path):
         """Resolve <base_path>/{id}/{version} to a package served by the distribution."""
         parts = base_path.strip("/").rsplit("/", 2)
         if len(parts) != 3:
@@ -103,6 +126,7 @@ class PackagePublishView(APIView):
             )
         base_path, package_id, version = parts
         distribution = _get_distribution(base_path)
+        _check_publish_permission(request.user, distribution)
         try:
             version_normalized = canonical_version(version)
         except InvalidNuspecError:
@@ -123,7 +147,7 @@ class PackagePublishView(APIView):
     @extend_schema(exclude=True)
     def delete(self, request, base_path):
         """Unlist a package version (``dotnet nuget delete``)."""
-        package = self._find_package(base_path)
+        package = self._find_package(request, base_path)
         if package.listed:
             package.listed = False
             package.save(update_fields=["listed"])
@@ -132,7 +156,7 @@ class PackagePublishView(APIView):
     @extend_schema(exclude=True)
     def post(self, request, base_path):
         """Relist a previously unlisted package version."""
-        package = self._find_package(base_path)
+        package = self._find_package(request, base_path)
         if not package.listed:
             package.listed = True
             package.save(update_fields=["listed"])

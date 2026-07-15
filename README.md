@@ -20,12 +20,22 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
   index, with `immediate` or `on_demand` download policy. On-demand packages are
   fetched from the upstream and cached on first client request.
 - **Push** packages with `dotnet nuget push`: each distribution advertises a
-  `PackagePublish/2.0.0` resource that adds pushed packages to its repository
-  (authenticated users only; configure source credentials in `nuget.config`).
+  `PackagePublish/2.0.0` resource that adds pushed packages to its repository.
+  Pushing requires the `nuget.publish_nugetdistribution` permission (grant the
+  `nuget.nugetdistribution_publisher` role); configure source credentials in
+  `nuget.config`.
 - **Unlist** packages with `dotnet nuget delete` (nuget.org semantics: hidden from
   search but still restorable by exact version); relist with a POST to the same URL.
+- **Private feeds**: protect a distribution with a `NugetContentGuard`. It grants
+  access by RBAC role (`nuget.nugetcontentguard_downloader`) and challenges anonymous
+  requests with `401 WWW-Authenticate: Basic` — which real NuGet clients require
+  before they send credentials (the stock RBAC guard's plain 403 does not work).
+- **RBAC** throughout: creator/owner/viewer roles on repositories, remotes,
+  distributions, and content guards; queryset scoping hides objects users cannot view.
 - Content is identified by the natural key *(lowercase package id, lowercase
   NuGet-normalized SemVer2 version)*, so re-uploads and syncs deduplicate cleanly.
+- Works with Pulp **domains** enabled (multi-tenancy): all endpoints, including
+  push/unlist, operate in the distribution's domain.
 
 ## Quickstart
 
@@ -71,6 +81,18 @@ http --auth admin:password POST :5001/pulp/api/v3/remotes/nuget/nuget/ \
     includes:='["Newtonsoft.Json"]'
 http --auth admin:password POST :5001<repo_href>sync/ remote=<remote_href>
 ```
+
+## Private feeds
+
+```bash
+http --auth admin:password POST :5001/pulp/api/v3/contentguards/nuget/nuget/ name=private
+http --auth admin:password PATCH :5001<distribution_href> content_guard=<guard_href>
+http --auth admin:password POST :5001<guard_href>add_role/ \
+    role=nuget.nugetcontentguard_downloader users:='["alice"]'
+```
+
+Clients keep working unchanged: the guard 401-challenges them, and they retry with the
+`packageSourceCredentials` from `nuget.config`.
 
 ## Troubleshooting restores
 

@@ -47,6 +47,16 @@ def newtonsoft_nupkg_path():
 
 
 @pytest.fixture
+def distribution_url_factory(pulp_content_url):
+    """Build an absolute URL under a distribution's base path."""
+
+    def _distribution_url(distribution, path):
+        return f"{pulp_content_url}{distribution.base_path}/{path}"
+
+    return _distribution_url
+
+
+@pytest.fixture
 def nupkg_factory(tmp_path):
     """Build a minimal synthetic .nupkg on disk and return its path."""
 

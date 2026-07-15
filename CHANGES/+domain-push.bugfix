@@ -1,0 +1,2 @@
+Fixed pushing to distributions outside the default domain: the publish endpoint now
+runs in the distribution's domain, so artifacts and tasks land in the right domain.
