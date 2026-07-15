@@ -10,7 +10,8 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('core', '0153_taskschedule_pulp_domain_alter_taskschedule_name_and_more'),
+        # Oldest core migration compatible with our declared pulpcore lower bound.
+        ('core', '0127_remove_upstreampulp_pulp_label_select'),
     ]
 
     operations = [

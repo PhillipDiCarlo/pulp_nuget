@@ -1,4 +1,5 @@
 include CHANGES.md
+recursive-include pulp_nuget *.nupkg
 include COMMITMENT
 exclude CONTRIBUTING.md
 include COPYRIGHT
