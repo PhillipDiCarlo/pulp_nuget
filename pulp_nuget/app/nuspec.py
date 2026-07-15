@@ -99,6 +99,152 @@ def version_sort_key(version):
     return (tuple(numbers), prerelease_key)
 
 
+class InvalidVersionRangeError(ValueError):
+    """Raised when a NuGet version range or package filter cannot be parsed."""
+
+
+def is_prerelease(version):
+    """Whether a version string carries a prerelease label (1.0.0-beta). Unparsable: False."""
+    match = _VERSION_RE.match(version.strip())
+    return bool(match and match.group("prerelease"))
+
+
+class VersionRange:
+    """
+    A NuGet version range in bracket notation.
+
+    https://learn.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges
+    Bounds compare by NuGet/SemVer2 precedence, so build metadata is ignored and
+    prerelease labels compare case-insensitively.
+    """
+
+    def __init__(self, min_version, min_inclusive, max_version, max_inclusive, raw):
+        self.min_version = min_version
+        self.min_inclusive = min_inclusive
+        self.max_version = max_version
+        self.max_inclusive = max_inclusive
+        self.raw = raw
+        self._min_key = version_sort_key(min_version) if min_version else None
+        self._max_key = version_sort_key(max_version) if max_version else None
+        self.has_prerelease_bound = bool(
+            (min_version and is_prerelease(min_version))
+            or (max_version and is_prerelease(max_version))
+        )
+
+    def __repr__(self):
+        return f"VersionRange({self.raw!r})"
+
+    def contains(self, version):
+        """Whether a version string falls inside the range, by pure precedence."""
+        key = version_sort_key(version)
+        if self._min_key is not None:
+            if key < self._min_key or (key == self._min_key and not self.min_inclusive):
+                return False
+        if self._max_key is not None:
+            if key > self._max_key or (key == self._max_key and not self.max_inclusive):
+                return False
+        return True
+
+    def matches_for_include(self, version):
+        """
+        contains(), but prerelease versions only match when a bound is prerelease.
+
+        This follows NuGet's user-facing convention: ``[1.0,2.0]`` selects stable
+        versions only, while ``[1.0-alpha,2.0]`` opts prereleases in.
+        """
+        if not self.contains(version):
+            return False
+        return not is_prerelease(version) or self.has_prerelease_bound
+
+    def excludes_all_below(self, version):
+        """Whether every version <= the given one is outside the range."""
+        if self._min_key is None:
+            return False
+        key = version_sort_key(version)
+        return key < self._min_key or (key == self._min_key and not self.min_inclusive)
+
+    def excludes_all_above(self, version):
+        """Whether every version >= the given one is outside the range."""
+        if self._max_key is None:
+            return False
+        key = version_sort_key(version)
+        return key > self._max_key or (key == self._max_key and not self.max_inclusive)
+
+
+def _require_version(text, range_string):
+    if not _VERSION_RE.match(text):
+        raise InvalidVersionRangeError(
+            _("Invalid version '{}' in version range '{}'.").format(text, range_string)
+        )
+    return text
+
+
+def parse_version_range(range_string):
+    """
+    Parse a NuGet version range into a VersionRange.
+
+    Accepted forms: ``1.0`` (minimum, inclusive), ``[1.0]`` (exact), and interval
+    notation like ``[1.0,2.0)``, ``(1.0,)``, or ``(,2.0]``. ``(,)`` matches everything.
+    """
+    text = range_string.strip()
+    if not text:
+        raise InvalidVersionRangeError(_("Empty version range."))
+    if text[0] not in "[(":
+        # A bare version means "this version or higher", like a plain nuspec dependency.
+        return VersionRange(_require_version(text, text), True, None, False, raw=text)
+    if len(text) < 2 or text[-1] not in "])":
+        raise InvalidVersionRangeError(
+            _("Version range '{}' does not end with ')' or ']'.").format(text)
+        )
+    min_inclusive = text[0] == "["
+    max_inclusive = text[-1] == "]"
+    parts = [part.strip() for part in text[1:-1].split(",")]
+    if len(parts) == 1:
+        # An exact version requires inclusive brackets: [1.0]. (1.0) matches nothing.
+        if not (min_inclusive and max_inclusive and parts[0]):
+            raise InvalidVersionRangeError(
+                _("Version range '{}' is not a valid exact-version range.").format(text)
+            )
+        version = _require_version(parts[0], text)
+        return VersionRange(version, True, version, True, raw=text)
+    if len(parts) != 2:
+        raise InvalidVersionRangeError(_("Invalid version range '{}'.").format(text))
+    lower, upper = parts
+    if not lower and not upper and (min_inclusive or max_inclusive):
+        raise InvalidVersionRangeError(
+            _("Version range '{}' has inclusive brackets but no bounds.").format(text)
+        )
+    lower = _require_version(lower, text) if lower else None
+    upper = _require_version(upper, text) if upper else None
+    if lower and upper and version_sort_key(lower) > version_sort_key(upper):
+        raise InvalidVersionRangeError(
+            _("Version range '{}' has a lower bound above its upper bound.").format(text)
+        )
+    return VersionRange(lower, min_inclusive, upper, max_inclusive, raw=text)
+
+
+def parse_package_filter(entry):
+    """
+    Parse a remote includes/excludes entry into (package_id_lower, VersionRange or None).
+
+    An entry is a package id, optionally followed by whitespace and a version range:
+    ``"Serilog"``, ``"Serilog [2.0,3.0)"``, ``"Serilog (,2.0]"``, ``"Serilog 2.0"``.
+    """
+    parts = entry.strip().split(None, 1)
+    if not parts:
+        raise InvalidVersionRangeError(_("Empty package filter entry."))
+    package_id = parts[0]
+    if any(character in package_id for character in "[](),"):
+        raise InvalidVersionRangeError(
+            _(
+                "Invalid package filter '{}': separate the package id and the version "
+                "range with a space, e.g. 'Serilog [2.0,3.0)'."
+            ).format(entry)
+        )
+    version_range = parse_version_range(parts[1]) if len(parts) == 2 else None
+    return package_id.lower(), version_range
+
+
 def _local_name(element):
     """Tag name of an element with any XML namespace stripped."""
     return element.tag.rsplit("}", 1)[-1]

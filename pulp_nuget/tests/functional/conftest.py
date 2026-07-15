@@ -48,6 +48,34 @@ def newtonsoft_nupkg_path():
 
 
 @pytest.fixture
+def remote_factory(nuget_bindings, gen_object_with_cleanup):
+    """Create a NugetRemote pointed at nuget.org (override any field via kwargs)."""
+
+    def _remote_factory(**body):
+        data = {
+            "name": str(uuid.uuid4()),
+            "url": "https://api.nuget.org/v3/index.json",
+            "policy": "on_demand",
+        }
+        data.update(body)
+        return gen_object_with_cleanup(nuget_bindings.RemotesNugetApi, data)
+
+    return _remote_factory
+
+
+@pytest.fixture
+def sync(nuget_bindings, monitor_task):
+    """Run a sync to completion and return the finished task (with progress reports)."""
+
+    def _sync(repository, remote, **body):
+        data = {"remote": remote.pulp_href, **body}
+        response = nuget_bindings.RepositoriesNugetApi.sync(repository.pulp_href, data)
+        return monitor_task(response.task)
+
+    return _sync
+
+
+@pytest.fixture
 def anon_session():
     """
     A requests session that ignores ~/.netrc.

@@ -9,7 +9,7 @@ from pulpcore.plugin import serializers as platform
 from pulpcore.plugin.util import get_domain_pk
 
 from . import models
-from .nuspec import InvalidNupkgError, parse_nupkg
+from .nuspec import InvalidNupkgError, InvalidVersionRangeError, parse_nupkg, parse_package_filter
 
 
 class NugetPackageSerializer(
@@ -147,12 +147,41 @@ class NugetRemoteSerializer(platform.RemoteSerializer):
     )
     includes = serializers.ListField(
         child=serializers.CharField(),
-        help_text=_("A list of package ids to sync (case-insensitive)."),
+        help_text=_(
+            "A list of packages to sync. Each entry is a package id (case-insensitive), "
+            "optionally followed by a space and a NuGet version range, e.g. "
+            "'Serilog' or 'Serilog [2.0,3.0)'. A range only matches prerelease versions "
+            "when one of its bounds has a prerelease label (e.g. '[2.0.0-alpha,3.0)')."
+        ),
+        default=list,
+    )
+    excludes = serializers.ListField(
+        child=serializers.CharField(),
+        help_text=_(
+            "A list of packages to skip, in the same syntax as includes. Excludes are "
+            "applied after includes, e.g. includes=['Serilog'] with "
+            "excludes=['Serilog (,2.0)'] syncs only Serilog 2.0 and newer. Unlike "
+            "includes, exclude ranges match prerelease versions by pure precedence."
+        ),
         default=list,
     )
 
+    def _validate_filter_list(self, value):
+        for entry in value:
+            try:
+                parse_package_filter(entry)
+            except InvalidVersionRangeError as exc:
+                raise serializers.ValidationError(str(exc))
+        return value
+
+    def validate_includes(self, value):
+        return self._validate_filter_list(value)
+
+    def validate_excludes(self, value):
+        return self._validate_filter_list(value)
+
     class Meta:
-        fields = platform.RemoteSerializer.Meta.fields + ("includes",)
+        fields = platform.RemoteSerializer.Meta.fields + ("includes", "excludes")
         model = models.NugetRemote
 
 
@@ -161,9 +190,29 @@ class NugetRepositorySerializer(platform.RepositorySerializer):
     A Serializer for NugetRepository.
     """
 
+    last_sync_details = serializers.JSONField(
+        help_text=_("State of the last successful sync, used for sync optimization."),
+        read_only=True,
+    )
+
     class Meta:
-        fields = platform.RepositorySerializer.Meta.fields
+        fields = platform.RepositorySerializer.Meta.fields + ("last_sync_details",)
         model = models.NugetRepository
+
+
+class NugetRepositorySyncURLSerializer(platform.RepositorySyncURLSerializer):
+    """
+    A Serializer for syncing a NugetRepository, with an optimization toggle.
+    """
+
+    optimize = serializers.BooleanField(
+        help_text=_(
+            "Skip the sync if the remote and the upstream registrations are unchanged "
+            "since the last sync."
+        ),
+        required=False,
+        default=True,
+    )
 
 
 class NugetContentGuardSerializer(platform.ContentGuardSerializer):
