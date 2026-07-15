@@ -1,5 +1,6 @@
 import os
 import uuid
+import zipfile
 
 import pytest
 
@@ -43,6 +44,47 @@ def nuget_distribution_factory(nuget_bindings, gen_object_with_cleanup):
 def newtonsoft_nupkg_path():
     """Filesystem path of the Newtonsoft.Json fixture package."""
     return NEWTONSOFT_NUPKG
+
+
+@pytest.fixture
+def nupkg_factory(tmp_path):
+    """Build a minimal synthetic .nupkg on disk and return its path."""
+
+    def _nupkg_factory(package_id, version, package_type=None):
+        package_types = ""
+        if package_type:
+            package_types = f'<packageTypes><packageType name="{package_type}" /></packageTypes>'
+        nuspec = f"""<?xml version="1.0"?>
+        <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+          <metadata>
+            <id>{package_id}</id>
+            <version>{version}</version>
+            <authors>pulp_nuget tests</authors>
+            <description>A synthetic test package.</description>
+            {package_types}
+          </metadata>
+        </package>"""
+        path = tmp_path / f"{package_id}.{version}.nupkg"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(f"{package_id}.nuspec", nuspec)
+        return str(path)
+
+    return _nupkg_factory
+
+
+@pytest.fixture
+def package_upload_factory(nuget_bindings, monitor_task):
+    """Upload a .nupkg by path, optionally into a repository, and return the content unit."""
+
+    def _package_upload_factory(path, **kwargs):
+        response = nuget_bindings.ContentPackagesApi.create(file=path, **kwargs)
+        task = monitor_task(response.task)
+        package_href = next(
+            resource for resource in task.created_resources if "content/nuget/packages/" in resource
+        )
+        return nuget_bindings.ContentPackagesApi.read(package_href)
+
+    return _package_upload_factory
 
 
 @pytest.fixture

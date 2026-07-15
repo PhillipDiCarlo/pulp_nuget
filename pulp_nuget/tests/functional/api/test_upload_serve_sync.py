@@ -213,6 +213,134 @@ def test_package_push(
     assert packages.results[0].package_id == "Newtonsoft.Json"
 
 
+def _publish_url(distribution, distribution_url_factory):
+    response = requests.get(distribution_url_factory(distribution, "v3/index.json"))
+    response.raise_for_status()
+    return next(
+        resource["@id"]
+        for resource in response.json()["resources"]
+        if resource["@type"] == "PackagePublish/2.0.0"
+    )
+
+
+def test_flatcontainer_nuspec(
+    nuget_repo,
+    newtonsoft_package_factory,
+    nuget_distribution_factory,
+    distribution_url_factory,
+):
+    """The flat container serves the raw .nuspec manifest extracted from the .nupkg."""
+    newtonsoft_package_factory(repository=nuget_repo.pulp_href)
+    distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
+
+    response = requests.get(
+        distribution_url_factory(
+            distribution, "v3-flatcontainer/newtonsoft.json/13.0.3/newtonsoft.json.nuspec"
+        )
+    )
+    response.raise_for_status()
+    assert b"<id>Newtonsoft.Json</id>" in response.content
+
+    # The manifest filename carries no version; the versioned form is not a real path.
+    response = requests.get(
+        distribution_url_factory(
+            distribution, "v3-flatcontainer/newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nuspec"
+        )
+    )
+    assert response.status_code == 404
+
+
+def test_unlist_and_relist(
+    nuget_repo,
+    newtonsoft_package_factory,
+    nuget_distribution_factory,
+    distribution_url_factory,
+    bindings_cfg,
+):
+    """DELETE on the publish endpoint unlists a package; POST relists it."""
+    newtonsoft_package_factory(repository=nuget_repo.pulp_href)
+    distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
+    delete_url = f"{_publish_url(distribution, distribution_url_factory)}/Newtonsoft.Json/13.0.3"
+    auth = (bindings_cfg.username, bindings_cfg.password)
+    search_url = distribution_url_factory(distribution, "v3/search")
+
+    assert requests.delete(delete_url).status_code == 401
+
+    try:
+        assert requests.delete(delete_url, auth=auth).status_code == 204
+
+        # Hidden from search, marked unlisted in registrations...
+        assert requests.get(search_url).json()["totalHits"] == 0
+        leaf = requests.get(
+            distribution_url_factory(distribution, "v3/registrations/newtonsoft.json/13.0.3.json")
+        ).json()
+        assert leaf["listed"] is False
+        assert leaf["catalogEntry"]["listed"] is False
+
+        # ...but still enumerable and downloadable by exact version.
+        response = requests.get(
+            distribution_url_factory(distribution, "v3-flatcontainer/newtonsoft.json/index.json")
+        )
+        assert response.json() == {"versions": ["13.0.3"]}
+        response = requests.get(
+            distribution_url_factory(
+                distribution,
+                "v3-flatcontainer/newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg",
+            )
+        )
+        assert response.status_code == 200
+
+        # Unknown package versions 404.
+        response = requests.delete(f"{delete_url[: -len('13.0.3')]}9.9.9", auth=auth)
+        assert response.status_code == 404
+    finally:
+        # Relist even on failure: the flag is global on the content unit.
+        assert requests.post(delete_url, auth=auth).status_code == 200
+
+    assert requests.get(search_url).json()["totalHits"] == 1
+
+
+def test_search_package_type_and_semver_level(
+    nuget_repo,
+    nupkg_factory,
+    package_upload_factory,
+    nuget_distribution_factory,
+    distribution_url_factory,
+):
+    """Search honors the packageType and semVerLevel query parameters."""
+    for package_id, version, package_type in (
+        ("Pulp.Test.Tool", "1.0.0", "DotnetTool"),
+        ("Pulp.Test.Lib", "1.0.0", None),
+        ("Pulp.Test.Semver2", "1.0.0-beta.1", None),
+    ):
+        package_upload_factory(
+            nupkg_factory(package_id, version, package_type), repository=nuget_repo.pulp_href
+        )
+    distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
+    search_url = distribution_url_factory(distribution, "v3/search")
+
+    def ids(**params):
+        response = requests.get(search_url, params=params)
+        response.raise_for_status()
+        return {entry["id"] for entry in response.json()["data"]}
+
+    assert ids() == {"Pulp.Test.Tool", "Pulp.Test.Lib"}
+    assert ids(packageType="DotnetTool") == {"Pulp.Test.Tool"}
+    # Matching is case-insensitive; no declared type means the implicit Dependency type.
+    assert ids(packageType="dependency") == {"Pulp.Test.Lib"}
+    assert ids(packageType="NoSuchType") == set()
+    # A dotted prerelease label is SemVer2: hidden unless semVerLevel=2.0.0.
+    assert ids(prerelease="true") == {"Pulp.Test.Tool", "Pulp.Test.Lib"}
+    assert ids(prerelease="true", semVerLevel="2.0.0") == {
+        "Pulp.Test.Tool",
+        "Pulp.Test.Lib",
+        "Pulp.Test.Semver2",
+    }
+
+    response = requests.get(search_url, params={"packageType": "DotnetTool"})
+    assert response.json()["data"][0]["packageTypes"] == [{"name": "DotnetTool"}]
+
+
 def test_sync_requires_includes(
     nuget_bindings, pulpcore_bindings, nuget_repo, gen_object_with_cleanup, monitor_task
 ):

@@ -6,13 +6,22 @@ restore, diff our response against the equivalent api.nuget.org resource.
 
 Endpoints (relative to a distribution's base URL):
 - v3/index.json                                       service index
-- v3-flatcontainer/{id}/index.json                    package versions
+- v3-flatcontainer/{id}/index.json                    package versions (incl. unlisted)
 - v3-flatcontainer/{id}/{version}/{id}.{version}.nupkg
-- v3/registrations/{id}/index.json                    registration index (inlined page)
+- v3-flatcontainer/{id}/{version}/{id}.nuspec         manifest (404 for on-demand packages
+                                                      whose .nupkg was never fetched)
+- v3/registrations/{id}/index.json                    registration index; pages are inlined
+                                                      up to REGISTRATION_PAGE_SIZE versions,
+                                                      external beyond that
+- v3/registrations/{id}/page/{lower}/{upper}.json     external registration page
 - v3/registrations/{id}/{version}.json                registration leaf
 - v3/search                                           SearchQueryService (query params, so it
                                                       is served by a content-app route, see
                                                       content.py)
+
+SemVer2 note: every advertised registration hive serves the same URL and includes SemVer2
+packages. Strictly, the plain RegistrationsBaseUrl hive should exclude them, but all
+maintained clients prefer the 3.6.0/Versioned hives; search does honor semVerLevel.
 """
 
 import re
@@ -22,15 +31,26 @@ from django.conf import settings
 
 from pulpcore.plugin.models import ContentArtifact
 
-from pulp_nuget.app.nuspec import version_sort_key
+from pulp_nuget.app.nuspec import InvalidNupkgError, is_semver2, read_nuspec, version_sort_key
 
 FLATCONTAINER_RE = re.compile(
     r"^v3-flatcontainer/(?P<package_id>[^/]+)/(?:index\.json$|(?P<version>[^/]+)/"
-    r"(?P<filename>[^/]+\.nupkg)$)"
+    r"(?P<filename>[^/]+\.(?:nupkg|nuspec))$)"
 )
 REGISTRATION_RE = re.compile(
     r"^v3/registrations/(?P<package_id>[^/]+)/(?:index\.json$|(?P<version>[^/]+)\.json$)"
 )
+REGISTRATION_PAGE_RE = re.compile(
+    r"^v3/registrations/(?P<package_id>[^/]+)/page/(?P<lower>[^/]+)/(?P<upper>[^/]+)\.json$"
+)
+
+# Maximum leaves inlined into a registration index / held by one external page.
+# nuget.org uses 64. Overridable (e.g. in tests) via the Django setting of the same name.
+REGISTRATION_PAGE_SIZE = 64
+
+
+def _page_size():
+    return getattr(settings, "NUGET_REGISTRATION_PAGE_SIZE", REGISTRATION_PAGE_SIZE)
 
 
 def base_url(distribution):
@@ -119,6 +139,35 @@ def get_package_artifact(distribution, package_id_lower, version, filename):
     return ContentArtifact.objects.select_related("artifact").filter(content=package).first()
 
 
+def get_package_nuspec(distribution, package_id_lower, version, filename):
+    """
+    An aiohttp Response with the raw .nuspec XML for a flatcontainer request, or None.
+
+    The manifest is extracted from the stored .nupkg, so on-demand packages whose
+    artifact was never downloaded yield None (404) until the .nupkg is fetched once.
+    """
+    if filename.lower() != f"{package_id_lower}.nuspec":
+        return None
+    package = (
+        get_packages(distribution)
+        .filter(package_id_lower=package_id_lower, version_normalized=version.lower())
+        .first()
+    )
+    if package is None:
+        return None
+    content_artifact = (
+        ContentArtifact.objects.select_related("artifact").filter(content=package).first()
+    )
+    if content_artifact is None or content_artifact.artifact is None:
+        return None
+    try:
+        with content_artifact.artifact.file.open("rb") as fp:
+            xml = read_nuspec(fp)
+    except (InvalidNupkgError, OSError):
+        return None
+    return web.Response(body=xml, content_type="application/xml")
+
+
 def _dependency_range(raw_range):
     """Render a nuspec version (range) attribute as a registration range string."""
     if not raw_range:
@@ -166,7 +215,7 @@ def _catalog_entry(package, base):
         "language": "",
         "licenseExpression": package.license_expression,
         "licenseUrl": package.license_url,
-        "listed": True,
+        "listed": package.listed,
         "minClientVersion": package.min_client_version,
         "packageContent": package_url,
         "projectUrl": package.project_url,
@@ -180,43 +229,101 @@ def _catalog_entry(package, base):
 
 
 def _registration_leaf(package, base):
+    catalog_entry = _catalog_entry(package, base)
     return {
         "@id": f"{base}v3/registrations/{package.package_id_lower}/"
         f"{package.version_normalized}.json",
         "@type": "Package",
-        "catalogEntry": _catalog_entry(package, base),
-        "listed": True,
-        "packageContent": _catalog_entry(package, base)["packageContent"],
+        "catalogEntry": catalog_entry,
+        "listed": package.listed,
+        "packageContent": catalog_entry["packageContent"],
         "registration": f"{base}v3/registrations/{package.package_id_lower}/index.json",
     }
 
 
-def registration_index(distribution, package_id_lower):
-    """The v3/registrations/{id}/index.json resource, or None if the id is unknown."""
-    packages = sorted(
+def _sorted_packages(distribution, package_id_lower):
+    return sorted(
         get_packages(distribution).filter(package_id_lower=package_id_lower),
         key=lambda package: version_sort_key(package.version_normalized),
     )
+
+
+def _page_chunks(packages, page_size):
+    """Split a version-sorted package list into registration pages."""
+    return [packages[i : i + page_size] for i in range(0, len(packages), page_size)]
+
+
+def _page_url(base, package_id_lower, chunk):
+    return (
+        f"{base}v3/registrations/{package_id_lower}/page/"
+        f"{chunk[0].version_normalized}/{chunk[-1].version_normalized}.json"
+    )
+
+
+def _full_page(chunk, base, package_id_lower, page_id):
+    index_url = f"{base}v3/registrations/{package_id_lower}/index.json"
+    return {
+        "@id": page_id,
+        "@type": "catalog:CatalogPage",
+        "count": len(chunk),
+        "items": [_registration_leaf(package, base) for package in chunk],
+        "lower": chunk[0].version_normalized,
+        "parent": index_url,
+        "upper": chunk[-1].version_normalized,
+    }
+
+
+def registration_index(distribution, package_id_lower):
+    """
+    The v3/registrations/{id}/index.json resource, or None if the id is unknown.
+
+    Mirrors nuget.org paging: with up to one page worth of versions the single page is
+    inlined; beyond that the index only lists page stubs whose @id must be fetched.
+    """
+    packages = _sorted_packages(distribution, package_id_lower)
     if not packages:
         return None
     base = base_url(distribution)
     index_url = f"{base}v3/registrations/{package_id_lower}/index.json"
-    page = {
-        "@id": f"{index_url}#page/{packages[0].version_normalized}/"
-        f"{packages[-1].version_normalized}",
-        "@type": "catalog:CatalogPage",
-        "count": len(packages),
-        "lower": packages[0].version_normalized,
-        "upper": packages[-1].version_normalized,
-        "parent": index_url,
-        "items": [_registration_leaf(package, base) for package in packages],
-    }
+    chunks = _page_chunks(packages, _page_size())
+    if len(chunks) == 1:
+        page_id = f"{index_url}#page/{packages[0].version_normalized}/"
+        page_id += packages[-1].version_normalized
+        items = [_full_page(chunks[0], base, package_id_lower, page_id)]
+    else:
+        items = [
+            {
+                "@id": _page_url(base, package_id_lower, chunk),
+                "@type": "catalog:CatalogPage",
+                "count": len(chunk),
+                "lower": chunk[0].version_normalized,
+                "upper": chunk[-1].version_normalized,
+            }
+            for chunk in chunks
+        ]
     return {
         "@id": index_url,
         "@type": ["catalog:CatalogRoot", "PackageRegistration", "catalog:Permalink"],
-        "count": 1,
-        "items": [page],
+        "count": len(items),
+        "items": items,
     }
+
+
+def registration_page(distribution, package_id_lower, lower, upper):
+    """The v3/registrations/{id}/page/{lower}/{upper}.json resource, or None."""
+    packages = _sorted_packages(distribution, package_id_lower)
+    if not packages:
+        return None
+    base = base_url(distribution)
+    for chunk in _page_chunks(packages, _page_size()):
+        if (
+            chunk[0].version_normalized == lower.lower()
+            and chunk[-1].version_normalized == upper.lower()
+        ):
+            return _full_page(
+                chunk, base, package_id_lower, _page_url(base, package_id_lower, chunk)
+            )
+    return None
 
 
 def registration_leaf(distribution, package_id_lower, version):
@@ -235,12 +342,33 @@ def _split_tags(tags):
     return [tag for tag in re.split(r"[,;\s]+", tags) if tag]
 
 
-def search(distribution, query="", skip=0, take=20, prerelease=False):
+def _package_type_names(package):
+    """Declared package type names; no declared types means the implicit Dependency type."""
+    names = [entry.get("name", "") for entry in (package.package_types or [])]
+    return [name for name in names if name] or ["Dependency"]
+
+
+def search(
+    distribution,
+    query="",
+    skip=0,
+    take=20,
+    prerelease=False,
+    package_type="",
+    sem_ver_level="",
+):
     """The SearchQueryService response."""
     base = base_url(distribution)
+    include_semver2 = sem_ver_level == "2.0.0"
     by_id = {}
-    for package in get_packages(distribution).order_by("package_id_lower"):
+    for package in get_packages(distribution).filter(listed=True).order_by("package_id_lower"):
         if not prerelease and "-" in package.version_normalized:
+            continue
+        if not include_semver2 and is_semver2(package.version):
+            continue
+        if package_type and package_type.lower() not in (
+            name.lower() for name in _package_type_names(package)
+        ):
             continue
         if query:
             haystack = " ".join(
@@ -269,7 +397,10 @@ def search(distribution, query="", skip=0, take=20, prerelease=False):
                 "licenseUrl": latest.license_url,
                 "projectUrl": latest.project_url,
                 "tags": _split_tags(latest.tags),
-                "authors": [author.strip() for author in latest.authors.split(",") if author],
+                "authors": [
+                    author.strip() for author in latest.authors.split(",") if author.strip()
+                ],
+                "packageTypes": [{"name": name} for name in _package_type_names(latest)],
                 "totalDownloads": 0,
                 "verified": False,
                 "versions": [
@@ -303,12 +434,24 @@ def handle(distribution, path):
         if match["version"] is None:
             if (data := flatcontainer_versions(distribution, package_id_lower)) is not None:
                 return web.json_response(data)
+        elif match["filename"].lower().endswith(".nuspec"):
+            return get_package_nuspec(
+                distribution, package_id_lower, match["version"], match["filename"]
+            )
         else:
             content_artifact = get_package_artifact(
                 distribution, package_id_lower, match["version"], match["filename"]
             )
             if content_artifact is not None:
                 return content_artifact
+        return None
+
+    if match := REGISTRATION_PAGE_RE.match(path):
+        data = registration_page(
+            distribution, match["package_id"].lower(), match["lower"], match["upper"]
+        )
+        if data is not None:
+            return web.json_response(data)
         return None
 
     if match := REGISTRATION_RE.match(path):

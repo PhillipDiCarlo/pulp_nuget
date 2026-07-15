@@ -160,6 +160,9 @@ class NugetFirstStage(Stage):
                         require_license_acceptance=bool(entry.get("requireLicenseAcceptance")),
                         min_client_version=entry.get("minClientVersion") or "",
                         dependency_groups=_dependency_groups(entry),
+                        # catalogEntry has no packageTypes, so synced content keeps the
+                        # default [] (implicit Dependency). Missing "listed" means listed.
+                        listed=entry.get("listed") is not False,
                     )
                     url = leaf.get("packageContent") or entry.get("packageContent")
                     if not url:

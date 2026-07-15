@@ -43,6 +43,12 @@ class NugetPackageContent(Content):
     min_client_version = models.CharField(max_length=64, default="", blank=True)
     # List of dependency groups: [{"targetFramework": str|None, "dependencies": [...]}]
     dependency_groups = models.JSONField(default=list, blank=True)
+    # List of declared package types: [{"name": str, "version": str?}]; empty means the
+    # implicit "Dependency" type.
+    package_types = models.JSONField(default=list, blank=True)
+    # Unlisted packages stay downloadable by exact version but are hidden from search
+    # and marked listed=false in registrations. Mutable; global per content unit.
+    listed = models.BooleanField(default=True)
 
     _pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.PROTECT)
 

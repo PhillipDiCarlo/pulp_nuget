@@ -56,6 +56,23 @@ def canonical_version(version):
     return normalize_version(version).lower()
 
 
+def is_semver2(version):
+    """
+    Whether a version string requires SemVer 2.0.0 support in the client.
+
+    A version is SemVer2 if it has build metadata (+...) or a dot-separated prerelease
+    label (e.g. 1.0.0-beta.1). Such packages are hidden from clients that do not send
+    semVerLevel=2.0.0. Unparsable versions are treated as not SemVer2.
+    """
+    match = _VERSION_RE.match(version.strip())
+    if not match:
+        return False
+    if match.group("metadata"):
+        return True
+    prerelease = match.group("prerelease")
+    return bool(prerelease and "." in prerelease)
+
+
 def version_sort_key(version):
     """
     A sort key ordering versions by NuGet/SemVer2 precedence.
@@ -191,6 +208,16 @@ def parse_nuspec(xml_data):
         _parse_dependencies(dependencies_element) if dependencies_element is not None else []
     )
 
+    package_types = []
+    package_types_element = _find_child(metadata, "packageTypes")
+    if package_types_element is not None:
+        for child in package_types_element:
+            if _local_name(child) == "packageType" and child.get("name"):
+                entry = {"name": child.get("name")}
+                if child.get("version"):
+                    entry["version"] = child.get("version")
+                package_types.append(entry)
+
     return {
         "package_id": package_id,
         "version": version,
@@ -208,12 +235,13 @@ def parse_nuspec(xml_data):
         "require_license_acceptance": require_license_acceptance,
         "min_client_version": metadata.get("minClientVersion", ""),
         "dependency_groups": dependency_groups,
+        "package_types": package_types,
     }
 
 
-def parse_nupkg(file_or_path):
+def read_nuspec(file_or_path):
     """
-    Extract and parse the .nuspec manifest from a .nupkg file (path or file object).
+    Return the raw .nuspec XML bytes from a .nupkg file (path or file object).
 
     The manifest must live in the root of the zip archive.
     """
@@ -231,4 +259,11 @@ def parse_nupkg(file_or_path):
             raise InvalidNupkgError(
                 _("Expected exactly one root-level .nuspec, found {}.").format(len(nuspec_names))
             )
-        return parse_nuspec(archive.read(nuspec_names[0]))
+        return archive.read(nuspec_names[0])
+
+
+def parse_nupkg(file_or_path):
+    """
+    Extract and parse the .nuspec manifest from a .nupkg file (path or file object).
+    """
+    return parse_nuspec(read_nuspec(file_or_path))

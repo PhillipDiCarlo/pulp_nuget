@@ -8,9 +8,11 @@ from pulp_nuget.app.nuspec import (
     InvalidNupkgError,
     InvalidNuspecError,
     canonical_version,
+    is_semver2,
     normalize_version,
     parse_nupkg,
     parse_nuspec,
+    read_nuspec,
 )
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
@@ -120,3 +122,44 @@ def test_parse_nupkg_not_a_zip(tmp_path):
     bogus.write_bytes(b"not a zip")
     with pytest.raises(InvalidNupkgError):
         parse_nupkg(str(bogus))
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("1.0.0", False),
+        ("1.0.0-beta", False),
+        ("1.0.0-beta.1", True),
+        ("1.0.0+build5", True),
+        ("1.0.0-rc.1+build5", True),
+        ("garbage", False),
+    ],
+)
+def test_is_semver2(raw, expected):
+    assert is_semver2(raw) is expected
+
+
+def test_parse_nuspec_package_types():
+    xml = b"""<package><metadata>
+        <id>X</id><version>1.0</version>
+        <packageTypes>
+          <packageType name="DotnetTool" />
+          <packageType name="Custom" version="2.0" />
+        </packageTypes>
+    </metadata></package>"""
+    metadata = parse_nuspec(xml)
+    assert metadata["package_types"] == [
+        {"name": "DotnetTool"},
+        {"name": "Custom", "version": "2.0"},
+    ]
+
+
+def test_parse_nuspec_no_package_types():
+    xml = b"<package><metadata><id>X</id><version>1.0</version></metadata></package>"
+    assert parse_nuspec(xml)["package_types"] == []
+
+
+def test_read_nuspec_returns_raw_xml():
+    xml = read_nuspec(NEWTONSOFT_NUPKG)
+    assert b"<id>Newtonsoft.Json</id>" in xml
+    assert parse_nuspec(xml)["version"] == "13.0.3"

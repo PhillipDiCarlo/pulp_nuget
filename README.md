@@ -12,14 +12,18 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
   license, dependency groups per target framework, minClientVersion) is parsed
   server-side from the embedded `.nuspec`.
 - **Serve** a NuGet v3 API per distribution — service index, flat container
-  (package downloads), registrations, and search — generated live from the
-  repository's latest version. No publish step is needed.
+  (package downloads and `.nuspec` manifests), registrations, and search —
+  generated live from the repository's latest version. No publish step is needed.
+  Registration indexes page externally past 64 versions (like nuget.org), and
+  search honors the `packageType` and `semVerLevel` query parameters.
 - **Sync** an allowlist of package ids (`includes`) from an upstream v3 service
   index, with `immediate` or `on_demand` download policy. On-demand packages are
   fetched from the upstream and cached on first client request.
 - **Push** packages with `dotnet nuget push`: each distribution advertises a
   `PackagePublish/2.0.0` resource that adds pushed packages to its repository
   (authenticated users only; configure source credentials in `nuget.config`).
+- **Unlist** packages with `dotnet nuget delete` (nuget.org semantics: hidden from
+  search but still restorable by exact version); relist with a POST to the same URL.
 - Content is identified by the natural key *(lowercase package id, lowercase
   NuGet-normalized SemVer2 version)*, so re-uploads and syncs deduplicate cleanly.
 
@@ -49,6 +53,14 @@ Push a package (the source must be repository-backed and credentials configured)
 
 ```bash
 dotnet nuget push my.package.1.0.0.nupkg --source pulp --api-key unused
+```
+
+The `X-NuGet-ApiKey` header is deliberately ignored — authentication is HTTP basic via
+`packageSourceCredentials`, so pass any value for `--api-key`. Unlist and relist:
+
+```bash
+dotnet nuget delete My.Package 1.0.0 --source pulp --api-key unused --non-interactive
+http --auth admin:password POST :5001/pulp_nuget/publish/foo/My.Package/1.0.0
 ```
 
 Or mirror packages from nuget.org:

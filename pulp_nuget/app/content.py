@@ -24,7 +24,7 @@ def _int_param(request, name, default):
         return default
 
 
-def _search_blocking(path, query, skip, take, prerelease):
+def _search_blocking(path, query, skip, take, prerelease, package_type, sem_ver_level):
     kwargs = {"base_path": path}
     if settings.DOMAIN_ENABLED:
         domain_name, _, base_path = path.partition("/")
@@ -33,7 +33,15 @@ def _search_blocking(path, query, skip, take, prerelease):
         distribution = NugetDistribution.objects.get(**kwargs)
     except NugetDistribution.DoesNotExist:
         return None
-    return v3_api.search(distribution, query=query, skip=skip, take=take, prerelease=prerelease)
+    return v3_api.search(
+        distribution,
+        query=query,
+        skip=skip,
+        take=take,
+        prerelease=prerelease,
+        package_type=package_type,
+        sem_ver_level=sem_ver_level,
+    )
 
 
 async def search(request):
@@ -44,6 +52,8 @@ async def search(request):
         _int_param(request, "skip", 0),
         _int_param(request, "take", 20),
         request.query.get("prerelease", "false").lower() == "true",
+        request.query.get("packageType", ""),
+        request.query.get("semVerLevel", ""),
     )
     if data is None:
         raise web.HTTPNotFound()

@@ -45,6 +45,14 @@ class NugetPackageSerializer(
     require_license_acceptance = serializers.BooleanField(read_only=True)
     min_client_version = serializers.CharField(read_only=True, allow_blank=True)
     dependency_groups = serializers.JSONField(read_only=True)
+    package_types = serializers.JSONField(read_only=True)
+    listed = serializers.BooleanField(
+        help_text=_(
+            "Whether the package is listed. Unlisted packages are hidden from search but "
+            "remain downloadable by exact version."
+        ),
+        read_only=True,
+    )
 
     def deferred_validate(self, data):
         """Parse the .nuspec metadata out of the artifact."""
@@ -105,6 +113,8 @@ class NugetPackageSerializer(
                 "require_license_acceptance",
                 "min_client_version",
                 "dependency_groups",
+                "package_types",
+                "listed",
             )
         )
 
