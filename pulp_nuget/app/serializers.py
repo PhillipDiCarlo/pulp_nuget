@@ -170,8 +170,20 @@ class NugetRemoteSerializer(platform.RemoteSerializer):
         for entry in value:
             try:
                 parse_package_filter(entry)
-            except InvalidVersionRangeError as exc:
-                raise serializers.ValidationError(str(exc))
+            except InvalidVersionRangeError:
+                # The message is built from the entry alone (not the exception) so no
+                # exception-derived text reaches the response (CodeQL
+                # py/stack-trace-exposure).
+                raise serializers.ValidationError(
+                    _(
+                        "Invalid package filter entry '{}'. An entry is a package id, "
+                        "optionally followed by a space and a NuGet version range: "
+                        "'Serilog', 'Serilog [2.0,3.0)', 'Serilog (,2.0]', or "
+                        "'Serilog 2.0'. Interval bounds must be valid versions in "
+                        "ascending order; an exact version needs inclusive brackets "
+                        "like '[2.0]'."
+                    ).format(entry)
+                )
         return value
 
     def validate_includes(self, value):
