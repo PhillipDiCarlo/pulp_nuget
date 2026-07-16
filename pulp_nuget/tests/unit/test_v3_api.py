@@ -19,6 +19,8 @@ def _stub(version, **overrides):
         tags="",
         project_url="",
         icon_url="",
+        icon_file="",
+        readme_file="",
         license_expression="",
         license_url="",
         require_license_acceptance=False,
@@ -39,6 +41,9 @@ def test_flatcontainer_re_matches_nupkg_and_nuspec():
     assert match and match["filename"] == "test.pkg.1.0.0.nupkg"
     match = v3_api.FLATCONTAINER_RE.match("v3-flatcontainer/test.pkg/1.0.0/test.pkg.nuspec")
     assert match and match["filename"] == "test.pkg.nuspec"
+    for asset in ("icon", "readme"):
+        match = v3_api.FLATCONTAINER_RE.match(f"v3-flatcontainer/test.pkg/1.0.0/{asset}")
+        assert match and match["filename"] == asset
     assert v3_api.FLATCONTAINER_RE.match("v3-flatcontainer/test.pkg/1.0.0/readme.md") is None
 
 

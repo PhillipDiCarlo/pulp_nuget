@@ -10,6 +10,8 @@ Endpoints (relative to a distribution's base URL):
 - v3-flatcontainer/{id}/{version}/{id}.{version}.nupkg
 - v3-flatcontainer/{id}/{version}/{id}.nuspec         manifest (404 for on-demand packages
                                                       whose .nupkg was never fetched)
+- v3-flatcontainer/{id}/{version}/icon                embedded icon (same 404 caveat; also
+- v3-flatcontainer/{id}/{version}/readme              404 when the package embeds none)
 - v3/registrations/{id}/index.json                    registration index; pages are inlined
                                                       up to REGISTRATION_PAGE_SIZE versions,
                                                       external beyond that
@@ -31,11 +33,17 @@ from django.conf import settings
 
 from pulpcore.plugin.models import ContentArtifact
 
-from pulp_nuget.app.nuspec import InvalidNupkgError, is_semver2, read_nuspec, version_sort_key
+from pulp_nuget.app.nuspec import (
+    InvalidNupkgError,
+    is_semver2,
+    read_nuspec,
+    read_package_file,
+    version_sort_key,
+)
 
 FLATCONTAINER_RE = re.compile(
     r"^v3-flatcontainer/(?P<package_id>[^/]+)/(?:index\.json$|(?P<version>[^/]+)/"
-    r"(?P<filename>[^/]+\.(?:nupkg|nuspec))$)"
+    r"(?P<filename>[^/]+\.(?:nupkg|nuspec)|icon|readme)$)"
 )
 REGISTRATION_RE = re.compile(
     r"^v3/registrations/(?P<package_id>[^/]+)/(?:index\.json$|(?P<version>[^/]+)\.json$)"
@@ -139,6 +147,23 @@ def get_package_artifact(distribution, package_id_lower, version, filename):
     return ContentArtifact.objects.select_related("artifact").filter(content=package).first()
 
 
+def _package_with_artifact(distribution, package_id_lower, version):
+    """The (package, artifact) pair for a stored package, or (package-or-None, None)."""
+    package = (
+        get_packages(distribution)
+        .filter(package_id_lower=package_id_lower, version_normalized=version.lower())
+        .first()
+    )
+    if package is None:
+        return None, None
+    content_artifact = (
+        ContentArtifact.objects.select_related("artifact").filter(content=package).first()
+    )
+    if content_artifact is None or content_artifact.artifact is None:
+        return package, None
+    return package, content_artifact.artifact
+
+
 def get_package_nuspec(distribution, package_id_lower, version, filename):
     """
     An aiohttp Response with the raw .nuspec XML for a flatcontainer request, or None.
@@ -148,24 +173,57 @@ def get_package_nuspec(distribution, package_id_lower, version, filename):
     """
     if filename.lower() != f"{package_id_lower}.nuspec":
         return None
-    package = (
-        get_packages(distribution)
-        .filter(package_id_lower=package_id_lower, version_normalized=version.lower())
-        .first()
-    )
-    if package is None:
-        return None
-    content_artifact = (
-        ContentArtifact.objects.select_related("artifact").filter(content=package).first()
-    )
-    if content_artifact is None or content_artifact.artifact is None:
+    _, artifact = _package_with_artifact(distribution, package_id_lower, version)
+    if artifact is None:
         return None
     try:
-        with content_artifact.artifact.file.open("rb") as fp:
+        with artifact.file.open("rb") as fp:
             xml = read_nuspec(fp)
     except (InvalidNupkgError, OSError):
         return None
     return web.Response(body=xml, content_type="application/xml")
+
+
+# Embedded icons may only be png or jpeg per the nuspec reference.
+_ICON_CONTENT_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
+
+def get_package_asset(distribution, package_id_lower, version, asset):
+    """
+    An aiohttp Response with an embedded asset (icon or readme), or None (404).
+
+    The file is extracted from the stored .nupkg at the path the .nuspec declared, so
+    like the .nuspec endpoint this 404s for on-demand packages never yet downloaded,
+    and for packages that do not embed the asset.
+    """
+    package, artifact = _package_with_artifact(distribution, package_id_lower, version)
+    if package is None or artifact is None:
+        return None
+    inner_path = package.icon_file if asset == "icon" else package.readme_file
+    if not inner_path:
+        return None
+    try:
+        with artifact.file.open("rb") as fp:
+            body = read_package_file(fp, inner_path)
+    except (InvalidNupkgError, OSError):
+        return None
+    if body is None:
+        return None
+    if asset == "icon":
+        extension = "." + inner_path.rsplit(".", 1)[-1].lower() if "." in inner_path else ""
+        content_type = _ICON_CONTENT_TYPES.get(extension, "application/octet-stream")
+    else:
+        content_type = "text/markdown"
+    return web.Response(body=body, content_type=content_type)
+
+
+def _icon_url(package, base):
+    """The package's icon URL: our flatcontainer endpoint for embedded icons."""
+    if package.icon_file:
+        return (
+            f"{base}v3-flatcontainer/{package.package_id_lower}/{package.version_normalized}/icon"
+        )
+    return package.icon_url
 
 
 def _dependency_range(raw_range):
@@ -210,7 +268,7 @@ def _catalog_entry(package, base):
             for group in package.dependency_groups
         ],
         "description": package.description,
-        "iconUrl": package.icon_url,
+        "iconUrl": _icon_url(package, base),
         "id": package.package_id,
         "language": "",
         "licenseExpression": package.license_expression,
@@ -393,7 +451,7 @@ def search(
                 "description": latest.description,
                 "summary": latest.summary,
                 "title": latest.title,
-                "iconUrl": latest.icon_url,
+                "iconUrl": _icon_url(latest, base),
                 "licenseUrl": latest.license_url,
                 "projectUrl": latest.project_url,
                 "tags": _split_tags(latest.tags),
@@ -434,6 +492,10 @@ def handle(distribution, path):
         if match["version"] is None:
             if (data := flatcontainer_versions(distribution, package_id_lower)) is not None:
                 return web.json_response(data)
+        elif match["filename"] in ("icon", "readme"):
+            return get_package_asset(
+                distribution, package_id_lower, match["version"], match["filename"]
+            )
         elif match["filename"].lower().endswith(".nuspec"):
             return get_package_nuspec(
                 distribution, package_id_lower, match["version"], match["filename"]

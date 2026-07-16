@@ -12,8 +12,9 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
   license, dependency groups per target framework, minClientVersion) is parsed
   server-side from the embedded `.nuspec`.
 - **Serve** a NuGet v3 API per distribution — service index, flat container
-  (package downloads and `.nuspec` manifests), registrations, and search —
-  generated live from the repository's latest version. No publish step is needed.
+  (package downloads, `.nuspec` manifests, embedded icons and READMEs),
+  registrations, and search — generated live from the repository's latest version.
+  No publish step is needed.
   Registration indexes page externally past 64 versions (like nuget.org), and
   search honors the `packageType` and `semVerLevel` query parameters.
 - **Sync** an allowlist of packages (`includes`) from an upstream v3 service

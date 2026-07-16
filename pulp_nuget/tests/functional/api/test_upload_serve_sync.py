@@ -162,6 +162,59 @@ def test_sync_from_nuget_org(
     assert response.content[:2] == b"PK"
 
 
+def test_embedded_icon_and_readme(
+    nuget_repo,
+    nupkg_factory,
+    package_upload_factory,
+    nuget_distribution_factory,
+    distribution_url_factory,
+):
+    """Embedded icon/readme are served from the flatcontainer and drive iconUrl."""
+    png = b"\x89PNG\r\n\x1a\n" + b"fakepixels"
+    path = nupkg_factory(
+        "asset.pkg",
+        "1.0.0",
+        icon=("images/icon.png", png),
+        readme=("docs/README.md", b"# Asset Package"),
+    )
+    package = package_upload_factory(path, repository=nuget_repo.pulp_href)
+    assert package.icon_file == "images/icon.png"
+    assert package.readme_file == "docs/README.md"
+    distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
+
+    response = requests.get(
+        distribution_url_factory(distribution, "v3-flatcontainer/asset.pkg/1.0.0/icon")
+    )
+    response.raise_for_status()
+    assert response.headers["Content-Type"].startswith("image/png")
+    assert response.content == png
+
+    response = requests.get(
+        distribution_url_factory(distribution, "v3-flatcontainer/asset.pkg/1.0.0/readme")
+    )
+    response.raise_for_status()
+    assert response.headers["Content-Type"].startswith("text/markdown")
+    assert response.content == b"# Asset Package"
+
+    # Search and registrations point iconUrl at our endpoint for embedded icons.
+    icon_url = distribution_url_factory(distribution, "v3-flatcontainer/asset.pkg/1.0.0/icon")
+    response = requests.get(distribution_url_factory(distribution, "v3/search"))
+    assert response.json()["data"][0]["iconUrl"] == icon_url
+    response = requests.get(
+        distribution_url_factory(distribution, "v3/registrations/asset.pkg/1.0.0.json")
+    )
+    assert response.json()["catalogEntry"]["iconUrl"] == icon_url
+
+    # A package without embedded assets 404s on both endpoints.
+    plain = nupkg_factory("plain.pkg", "1.0.0")
+    package_upload_factory(plain, repository=nuget_repo.pulp_href)
+    for asset in ("icon", "readme"):
+        response = requests.get(
+            distribution_url_factory(distribution, f"v3-flatcontainer/plain.pkg/1.0.0/{asset}")
+        )
+        assert response.status_code == 404, asset
+
+
 def test_remote_filter_validation(nuget_bindings, remote_factory):
     """Malformed includes/excludes entries are rejected when the remote is created."""
     for field in ("includes", "excludes"):

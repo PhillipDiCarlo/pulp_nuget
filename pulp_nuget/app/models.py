@@ -44,6 +44,9 @@ class NugetPackageContent(Content):
     tags = models.TextField(default="", blank=True)
     project_url = models.TextField(default="", blank=True)
     icon_url = models.TextField(default="", blank=True)
+    # Paths of embedded asset files inside the .nupkg (empty when not declared).
+    icon_file = models.TextField(default="", blank=True)
+    readme_file = models.TextField(default="", blank=True)
     license_expression = models.TextField(default="", blank=True)
     license_file = models.TextField(default="", blank=True)
     license_url = models.TextField(default="", blank=True)

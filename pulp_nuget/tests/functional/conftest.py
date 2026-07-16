@@ -104,10 +104,14 @@ def distribution_url_factory(pulp_content_url):
 def nupkg_factory(tmp_path):
     """Build a minimal synthetic .nupkg on disk and return its path."""
 
-    def _nupkg_factory(package_id, version, package_type=None):
-        package_types = ""
+    def _nupkg_factory(package_id, version, package_type=None, icon=None, readme=None):
+        extra_elements = ""
         if package_type:
-            package_types = f'<packageTypes><packageType name="{package_type}" /></packageTypes>'
+            extra_elements += f'<packageTypes><packageType name="{package_type}" /></packageTypes>'
+        if icon:
+            extra_elements += f"<icon>{icon[0]}</icon>"
+        if readme:
+            extra_elements += f"<readme>{readme[0]}</readme>"
         nuspec = f"""<?xml version="1.0"?>
         <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
           <metadata>
@@ -115,12 +119,17 @@ def nupkg_factory(tmp_path):
             <version>{version}</version>
             <authors>pulp_nuget tests</authors>
             <description>A synthetic test package.</description>
-            {package_types}
+            {extra_elements}
           </metadata>
         </package>"""
         path = tmp_path / f"{package_id}.{version}.nupkg"
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr(f"{package_id}.nuspec", nuspec)
+            # icon/readme are ("path/in/package", b"content") pairs.
+            if icon:
+                archive.writestr(icon[0], icon[1])
+            if readme:
+                archive.writestr(readme[0], readme[1])
         return str(path)
 
     return _nupkg_factory
