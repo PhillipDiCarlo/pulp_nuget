@@ -76,6 +76,44 @@ class NugetPackageContent(Content):
         unique_together = ("package_id_lower", "version_normalized", "_pulp_domain")
 
 
+class NugetSymbolPackageContent(Content):
+    """
+    A NuGet symbol package (.snupkg), the "nuget.symbol_package" content type.
+
+    It uses the same (package_id_lower, version_normalized) natural key convention as
+    NugetPackageContent: a symbol package carries the portable PDBs for the package of
+    the same id and version. pdb_files records each PDB's SSQP identity so the
+    distribution can serve it to debuggers.
+    """
+
+    TYPE = "symbol_package"
+
+    # Natural key (canonical, lowercase).
+    package_id_lower = models.CharField(max_length=128)
+    version_normalized = models.CharField(max_length=128)
+
+    # Original casing/form, for display.
+    package_id = models.CharField(max_length=128)
+    version = models.CharField(max_length=128)
+
+    # [{"path": archive member, "name": lowercased basename, "signature": SSQP signature}]
+    pdb_files = models.JSONField(default=list, blank=True)
+
+    _pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.PROTECT)
+
+    @property
+    def relative_path(self):
+        """The flat-container relative path of the .snupkg within a repository."""
+        return (
+            f"{self.package_id_lower}/{self.version_normalized}/"
+            f"{self.package_id_lower}.{self.version_normalized}.snupkg"
+        )
+
+    class Meta:
+        default_related_name = "%(app_label)s_%(model_name)s"
+        unique_together = ("package_id_lower", "version_normalized", "_pulp_domain")
+
+
 class NugetRemote(Remote, AutoAddObjPermsMixin):
     """
     A Remote for syncing from an upstream NuGet v3 feed.
@@ -102,12 +140,12 @@ class NugetRemote(Remote, AutoAddObjPermsMixin):
 
 class NugetRepository(Repository, AutoAddObjPermsMixin):
     """
-    A Repository for NugetPackageContent.
+    A Repository for NuGet packages and symbol packages.
     """
 
     TYPE = "nuget"
 
-    CONTENT_TYPES = [NugetPackageContent]
+    CONTENT_TYPES = [NugetPackageContent, NugetSymbolPackageContent]
     REMOTE_TYPES = [NugetRemote]
 
     # State of the last sync, used to skip syncs when nothing changed (like pulp_file).

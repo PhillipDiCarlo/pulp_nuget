@@ -29,6 +29,10 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
   `nuget.config`.
 - **Unlist** packages with `dotnet nuget delete` (nuget.org semantics: hidden from
   search but still restorable by exact version); relist with a POST to the same URL.
+- **Symbol packages**: push `.snupkg` files via the `SymbolPackagePublish/4.9.0`
+  resource, and each distribution doubles as an SSQP **symbol server** — point
+  Visual Studio or `dotnet-symbol` at `<distribution>/symbols/` to fetch the
+  portable PDBs.
 - **Private feeds**: protect a distribution with a `NugetContentGuard`. It grants
   access by RBAC role (`nuget.nugetcontentguard_downloader`) and challenges anonymous
   requests with `401 WWW-Authenticate: Basic` — which real NuGet clients require

@@ -8,10 +8,14 @@ Endpoints (relative to a distribution's base URL):
 - v3/index.json                                       service index
 - v3-flatcontainer/{id}/index.json                    package versions (incl. unlisted)
 - v3-flatcontainer/{id}/{version}/{id}.{version}.nupkg
+- v3-flatcontainer/{id}/{version}/{id}.{version}.snupkg  symbol package, when one is stored
 - v3-flatcontainer/{id}/{version}/{id}.nuspec         manifest (404 for on-demand packages
                                                       whose .nupkg was never fetched)
 - v3-flatcontainer/{id}/{version}/icon                embedded icon (same 404 caveat; also
 - v3-flatcontainer/{id}/{version}/readme              404 when the package embeds none)
+- symbols/{file}.pdb/{signature}/{file}.pdb           SSQP symbol server: portable PDBs
+                                                      extracted from stored .snupkg files
+                                                      (point debuggers at <base>/symbols/)
 - v3/registrations/{id}/index.json                    registration index; pages are inlined
                                                       up to REGISTRATION_PAGE_SIZE versions,
                                                       external beyond that
@@ -43,7 +47,13 @@ from pulp_nuget.app.nuspec import (
 
 FLATCONTAINER_RE = re.compile(
     r"^v3-flatcontainer/(?P<package_id>[^/]+)/(?:index\.json$|(?P<version>[^/]+)/"
-    r"(?P<filename>[^/]+\.(?:nupkg|nuspec)|icon|readme)$)"
+    r"(?P<filename>[^/]+\.(?:s?nupkg|nuspec)|icon|readme)$)"
+)
+# SSQP symbol request: <file>.pdb/<40 hex chars>/<file>.pdb. Keys are lowercase per the
+# spec, but match case-insensitively and compare in code.
+SYMBOLS_RE = re.compile(
+    r"^symbols/(?P<filename>[^/]+\.pdb)/(?P<signature>[0-9a-f]{40})/(?P<filename2>[^/]+\.pdb)$",
+    re.IGNORECASE,
 )
 REGISTRATION_RE = re.compile(
     r"^v3/registrations/(?P<package_id>[^/]+)/(?:index\.json$|(?P<version>[^/]+)\.json$)"
@@ -72,14 +82,23 @@ def base_url(distribution):
     return "/".join(parts) + "/"
 
 
-def publish_url(distribution):
-    """The absolute URL of the PackagePublish resource for this distribution."""
+def _api_url(distribution, prefix):
     origin = settings.CONTENT_ORIGIN.strip("/")
-    parts = [origin, "pulp_nuget/publish"]
+    parts = [origin, prefix]
     if settings.DOMAIN_ENABLED:
         parts.append(distribution.pulp_domain.name)
     parts.append(distribution.base_path.strip("/"))
     return "/".join(parts)
+
+
+def publish_url(distribution):
+    """The absolute URL of the PackagePublish resource for this distribution."""
+    return _api_url(distribution, "pulp_nuget/publish")
+
+
+def symbol_publish_url(distribution):
+    """The absolute URL of the SymbolPackagePublish resource for this distribution."""
+    return _api_url(distribution, "pulp_nuget/publish-symbols")
 
 
 def get_packages(distribution):
@@ -115,6 +134,7 @@ def service_index(distribution):
         {"@id": search, "@type": "SearchQueryService/3.0.0-rc"},
         {"@id": search, "@type": "SearchQueryService/3.0.0-beta"},
         {"@id": publish_url(distribution), "@type": "PackagePublish/2.0.0"},
+        {"@id": symbol_publish_url(distribution), "@type": "SymbolPackagePublish/4.9.0"},
     ]
     return {"version": "3.0.0", "resources": resources}
 
@@ -145,6 +165,62 @@ def get_package_artifact(distribution, package_id_lower, version, filename):
     if package is None:
         return None
     return ContentArtifact.objects.select_related("artifact").filter(content=package).first()
+
+
+def get_symbol_packages(distribution):
+    """A queryset of the NugetSymbolPackageContent served by this distribution."""
+    from pulp_nuget.app.models import NugetSymbolPackageContent
+
+    _, repo_version, _ = distribution.get_repository_publication_and_version()
+    if repo_version is None:
+        return NugetSymbolPackageContent.objects.none()
+    return NugetSymbolPackageContent.objects.filter(pk__in=repo_version.content)
+
+
+def get_symbol_package_artifact(distribution, package_id_lower, version, filename):
+    """The ContentArtifact for a flatcontainer .snupkg request, or None."""
+    version = version.lower()
+    if filename.lower() != f"{package_id_lower}.{version}.snupkg":
+        return None
+    package = (
+        get_symbol_packages(distribution)
+        .filter(package_id_lower=package_id_lower, version_normalized=version)
+        .first()
+    )
+    if package is None:
+        return None
+    return ContentArtifact.objects.select_related("artifact").filter(content=package).first()
+
+
+def get_symbol_file(distribution, filename, signature):
+    """
+    An aiohttp Response with a portable PDB for an SSQP symbol request, or None (404).
+
+    Debuggers ask for symbols/{file}/{signature}/{file}; the PDB is extracted from a
+    stored .snupkg whose recorded PDB identities match.
+    """
+    filename = filename.lower()
+    signature = signature.lower()
+    candidates = get_symbol_packages(distribution).filter(
+        pdb_files__contains=[{"name": filename, "signature": signature}]
+    )
+    for package in candidates:
+        content_artifact = (
+            ContentArtifact.objects.select_related("artifact").filter(content=package).first()
+        )
+        if content_artifact is None or content_artifact.artifact is None:
+            continue
+        for record in package.pdb_files:
+            if record["name"] != filename or record["signature"] != signature:
+                continue
+            try:
+                with content_artifact.artifact.file.open("rb") as fp:
+                    body = read_package_file(fp, record["path"])
+            except (InvalidNupkgError, OSError):
+                body = None
+            if body is not None:
+                return web.Response(body=body, content_type="application/octet-stream")
+    return None
 
 
 def _package_with_artifact(distribution, package_id_lower, version):
@@ -500,12 +576,23 @@ def handle(distribution, path):
             return get_package_nuspec(
                 distribution, package_id_lower, match["version"], match["filename"]
             )
+        elif match["filename"].lower().endswith(".snupkg"):
+            content_artifact = get_symbol_package_artifact(
+                distribution, package_id_lower, match["version"], match["filename"]
+            )
+            if content_artifact is not None:
+                return content_artifact
         else:
             content_artifact = get_package_artifact(
                 distribution, package_id_lower, match["version"], match["filename"]
             )
             if content_artifact is not None:
                 return content_artifact
+        return None
+
+    if match := SYMBOLS_RE.match(path):
+        if match["filename"].lower() == match["filename2"].lower():
+            return get_symbol_file(distribution, match["filename"], match["signature"])
         return None
 
     if match := REGISTRATION_PAGE_RE.match(path):

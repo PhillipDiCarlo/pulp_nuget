@@ -53,6 +53,48 @@ def _check_publish_permission(user, distribution):
     )
 
 
+def _dispatch_push(request, base_path, serializer_name):
+    """Receive a pushed package file and dispatch a task adding it to the repository."""
+    # NuGet clients PUT the advertised URL with a trailing slash appended.
+    base_path = base_path.strip("/")
+    distribution = _get_distribution(base_path)
+    _check_publish_permission(request.user, distribution)
+    if distribution.repository is None:
+        raise ValidationError(
+            _(
+                "The distribution at '{}' has no repository; packages cannot be pushed to it."
+            ).format(base_path)
+        )
+    repository = distribution.repository.cast()
+
+    files = list(request.FILES.values())
+    if len(files) != 1:
+        raise ValidationError(_("Exactly one package file must be provided."))
+
+    artifact = Artifact.init_and_validate(files[0])
+    try:
+        existing = Artifact.objects.get(sha256=artifact.sha256, pulp_domain=get_domain())
+        existing.touch()
+        artifact = existing
+    except (Artifact.DoesNotExist, DatabaseError):
+        try:
+            artifact.save()
+        except IntegrityError:
+            artifact = Artifact.objects.get(sha256=artifact.sha256, pulp_domain=get_domain())
+
+    task = dispatch(
+        general_create,
+        exclusive_resources=[repository],
+        args=("nuget", serializer_name),
+        kwargs={
+            "data": {"artifact": get_url(artifact), "repository": get_url(repository)},
+            "context": {},
+        },
+    )
+    # NuGet clients only need the 202; the task href is for API consumers and tests.
+    return Response({"task": get_url(task)}, status=status.HTTP_202_ACCEPTED)
+
+
 class PackagePublishView(APIView):
     """
     The PackagePublish/2.0.0 resource.
@@ -78,44 +120,7 @@ class PackagePublishView(APIView):
     @extend_schema(exclude=True)
     def put(self, request, base_path):
         """Receive a pushed .nupkg and add it to the distribution's repository."""
-        # NuGet clients PUT the advertised URL with a trailing slash appended.
-        base_path = base_path.strip("/")
-        distribution = _get_distribution(base_path)
-        _check_publish_permission(request.user, distribution)
-        if distribution.repository is None:
-            raise ValidationError(
-                _(
-                    "The distribution at '{}' has no repository; packages cannot be pushed to it."
-                ).format(base_path)
-            )
-        repository = distribution.repository.cast()
-
-        files = list(request.FILES.values())
-        if len(files) != 1:
-            raise ValidationError(_("Exactly one package file must be provided."))
-
-        artifact = Artifact.init_and_validate(files[0])
-        try:
-            existing = Artifact.objects.get(sha256=artifact.sha256, pulp_domain=get_domain())
-            existing.touch()
-            artifact = existing
-        except (Artifact.DoesNotExist, DatabaseError):
-            try:
-                artifact.save()
-            except IntegrityError:
-                artifact = Artifact.objects.get(sha256=artifact.sha256, pulp_domain=get_domain())
-
-        task = dispatch(
-            general_create,
-            exclusive_resources=[repository],
-            args=("nuget", "NugetPackageSerializer"),
-            kwargs={
-                "data": {"artifact": get_url(artifact), "repository": get_url(repository)},
-                "context": {},
-            },
-        )
-        # NuGet clients only need the 202; the task href is for API consumers and tests.
-        return Response({"task": get_url(task)}, status=status.HTTP_202_ACCEPTED)
+        return _dispatch_push(request, base_path, "NugetPackageSerializer")
 
     def _find_package(self, request, base_path):
         """Resolve <base_path>/{id}/{version} to a package served by the distribution."""
@@ -161,3 +166,27 @@ class PackagePublishView(APIView):
             package.listed = True
             package.save(update_fields=["listed"])
         return Response(status=status.HTTP_200_OK)
+
+
+class SymbolPackagePublishView(APIView):
+    """
+    The SymbolPackagePublish/4.9.0 resource.
+
+    PUT <base_path>: ``dotnet nuget push`` for .snupkg files. Clients that find this
+    resource in the service index push symbol packages here (a bare ``dotnet nuget
+    push My.Package.1.0.0.snupkg`` and the automatic symbol push that follows a
+    .nupkg push when a matching .snupkg sits next to it). Validation — the manifest,
+    the SymbolsPackage package type, and portable-PDB parsing — happens in the
+    dispatched task, mirroring the asynchronous 202 semantics of the package push.
+
+    Authentication and permissions match PackagePublishView: HTTP basic plus the
+    nuget.publish_nugetdistribution permission.
+    """
+
+    parser_classes = [MultiPartParser]
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(exclude=True)
+    def put(self, request, base_path):
+        """Receive a pushed .snupkg and add it to the distribution's repository."""
+        return _dispatch_push(request, base_path, "NugetSymbolPackageSerializer")

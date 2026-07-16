@@ -39,12 +39,28 @@ BASE = "http://example.test/pulp/content/feed/"
 def test_flatcontainer_re_matches_nupkg_and_nuspec():
     match = v3_api.FLATCONTAINER_RE.match("v3-flatcontainer/test.pkg/1.0.0/test.pkg.1.0.0.nupkg")
     assert match and match["filename"] == "test.pkg.1.0.0.nupkg"
+    match = v3_api.FLATCONTAINER_RE.match("v3-flatcontainer/test.pkg/1.0.0/test.pkg.1.0.0.snupkg")
+    assert match and match["filename"] == "test.pkg.1.0.0.snupkg"
     match = v3_api.FLATCONTAINER_RE.match("v3-flatcontainer/test.pkg/1.0.0/test.pkg.nuspec")
     assert match and match["filename"] == "test.pkg.nuspec"
     for asset in ("icon", "readme"):
         match = v3_api.FLATCONTAINER_RE.match(f"v3-flatcontainer/test.pkg/1.0.0/{asset}")
         assert match and match["filename"] == asset
     assert v3_api.FLATCONTAINER_RE.match("v3-flatcontainer/test.pkg/1.0.0/readme.md") is None
+
+
+def test_symbols_re():
+    signature = "497b72f6390a44fc878e5a2d63b6cc4b" + "ffffffff"
+    match = v3_api.SYMBOLS_RE.match(f"symbols/foo.pdb/{signature}/foo.pdb")
+    assert match["filename"] == "foo.pdb"
+    assert match["signature"] == signature
+    assert match["filename2"] == "foo.pdb"
+    # Case-insensitive (SSQP keys are canonically lowercase, but be tolerant).
+    assert v3_api.SYMBOLS_RE.match(f"symbols/Foo.PDB/{signature.upper()}/Foo.PDB")
+    # Wrong shapes do not match: bad signature length, non-pdb files.
+    assert v3_api.SYMBOLS_RE.match(f"symbols/foo.pdb/{signature[:-2]}/foo.pdb") is None
+    assert v3_api.SYMBOLS_RE.match(f"symbols/foo.dll/{signature}/foo.dll") is None
+    assert v3_api.SYMBOLS_RE.match(f"symbols/foo.pdb/{signature}/foo.pdb/extra") is None
 
 
 def test_registration_page_re():
