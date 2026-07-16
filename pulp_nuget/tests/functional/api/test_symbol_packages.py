@@ -70,9 +70,7 @@ def test_symbol_package_push_and_symbol_server(
 
     # The SSQP symbol server hands the PDB to debuggers by filename and signature...
     response = requests.get(
-        distribution_url_factory(
-            distribution, f"symbols/{id_lower}.pdb/{signature}/{id_lower}.pdb"
-        )
+        distribution_url_factory(distribution, f"symbols/{id_lower}.pdb/{signature}/{id_lower}.pdb")
     )
     response.raise_for_status()
     assert response.content == pdb
