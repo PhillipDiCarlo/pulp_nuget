@@ -162,6 +162,15 @@ def test_sync_from_nuget_org(
     assert response.content[:2] == b"PK"
 
 
+def test_remote_filter_validation(nuget_bindings, remote_factory):
+    """Malformed includes/excludes entries are rejected when the remote is created."""
+    for field in ("includes", "excludes"):
+        with pytest.raises(nuget_bindings.module.ApiException) as exc:
+            remote_factory(**{field: ["Serilog [2.0"]})
+        assert exc.value.status == 400
+        assert "Invalid package filter entry" in exc.value.body
+
+
 def test_sync_version_ranges_and_excludes(nuget_bindings, nuget_repo, remote_factory, sync):
     """Includes may carry version ranges, and excludes filter matching versions out."""
     remote = remote_factory(
