@@ -364,6 +364,13 @@ def parse_nuspec(xml_data):
                     entry["version"] = child.get("version")
                 package_types.append(entry)
 
+    # Embedded asset files (paths inside the .nupkg, forward-slash separated).
+    embedded_files = {}
+    for name in ("icon", "readme"):
+        element = _find_child(metadata, name)
+        if element is not None and element.text:
+            embedded_files[name] = element.text.strip().replace("\\", "/")
+
     return {
         "package_id": package_id,
         "version": version,
@@ -382,6 +389,8 @@ def parse_nuspec(xml_data):
         "min_client_version": metadata.get("minClientVersion", ""),
         "dependency_groups": dependency_groups,
         "package_types": package_types,
+        "icon_file": embedded_files.get("icon", ""),
+        "readme_file": embedded_files.get("readme", ""),
     }
 
 
@@ -406,6 +415,28 @@ def read_nuspec(file_or_path):
                 _("Expected exactly one root-level .nuspec, found {}.").format(len(nuspec_names))
             )
         return archive.read(nuspec_names[0])
+
+
+def read_package_file(file_or_path, inner_path):
+    """
+    Return the bytes of a file inside a .nupkg (path or file object), or None if absent.
+
+    The inner path is matched exactly first, then case-insensitively (nuspec asset
+    declarations do not always match the archive entry's casing).
+    """
+    try:
+        archive = zipfile.ZipFile(file_or_path)
+    except zipfile.BadZipFile:
+        raise InvalidNupkgError(_("The file is not a zip archive."))
+    with archive:
+        try:
+            return archive.read(inner_path)
+        except KeyError:
+            wanted = inner_path.lower()
+            for name in archive.namelist():
+                if name.lower() == wanted:
+                    return archive.read(name)
+    return None
 
 
 def parse_nupkg(file_or_path):

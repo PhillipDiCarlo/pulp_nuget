@@ -39,6 +39,8 @@ class NugetPackageSerializer(
     tags = serializers.CharField(read_only=True, allow_blank=True)
     project_url = serializers.CharField(read_only=True, allow_blank=True)
     icon_url = serializers.CharField(read_only=True, allow_blank=True)
+    icon_file = serializers.CharField(read_only=True, allow_blank=True)
+    readme_file = serializers.CharField(read_only=True, allow_blank=True)
     license_expression = serializers.CharField(read_only=True, allow_blank=True)
     license_file = serializers.CharField(read_only=True, allow_blank=True)
     license_url = serializers.CharField(read_only=True, allow_blank=True)
@@ -107,6 +109,8 @@ class NugetPackageSerializer(
                 "tags",
                 "project_url",
                 "icon_url",
+                "icon_file",
+                "readme_file",
                 "license_expression",
                 "license_file",
                 "license_url",

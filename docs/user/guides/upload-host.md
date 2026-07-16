@@ -14,6 +14,10 @@ All metadata (id, version, authors, description, tags, license, dependency group
 target framework, package types, minClientVersion) is parsed server-side from the
 `.nuspec` embedded in the package — nothing else needs to be supplied.
 
+Packages that embed an icon or README (the `<icon>`/`<readme>` nuspec elements) get
+them served at `v3-flatcontainer/{id}/{version}/icon` and `.../readme`, like on
+nuget.org; search results and registrations point `iconUrl` at the icon endpoint.
+
 Content is identified by the natural key *(lowercase package id, lowercase
 NuGet-normalized SemVer2 version)*, so re-uploading the same package deduplicates
 cleanly.

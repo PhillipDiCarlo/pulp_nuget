@@ -13,6 +13,7 @@ from pulp_nuget.app.nuspec import (
     parse_nupkg,
     parse_nuspec,
     read_nuspec,
+    read_package_file,
 )
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
@@ -110,6 +111,37 @@ def test_parse_nuspec_license_file():
     metadata = parse_nuspec(xml)
     assert metadata["license_file"] == "LICENSE.txt"
     assert metadata["license_expression"] == ""
+
+
+def test_parse_nuspec_embedded_icon_and_readme():
+    xml = b"""<package><metadata>
+        <id>X</id><version>1.0</version>
+        <icon>images\\icon.png</icon>
+        <readme>docs/README.md</readme>
+    </metadata></package>"""
+    metadata = parse_nuspec(xml)
+    # Backslash paths are normalized to the forward slashes zip archives use.
+    assert metadata["icon_file"] == "images/icon.png"
+    assert metadata["readme_file"] == "docs/README.md"
+
+
+def test_parse_nuspec_no_embedded_assets():
+    xml = b"<package><metadata><id>X</id><version>1.0</version></metadata></package>"
+    metadata = parse_nuspec(xml)
+    assert metadata["icon_file"] == ""
+    assert metadata["readme_file"] == ""
+
+
+def test_read_package_file(tmp_path):
+    import zipfile
+
+    path = tmp_path / "pkg.nupkg"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("docs/README.md", b"# hello")
+    assert read_package_file(str(path), "docs/README.md") == b"# hello"
+    # Case-insensitive fallback: the nuspec declaration may not match the entry casing.
+    assert read_package_file(str(path), "Docs/readme.MD") == b"# hello"
+    assert read_package_file(str(path), "missing.txt") is None
 
 
 def test_parse_nuspec_missing_id():
