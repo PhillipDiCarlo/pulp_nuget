@@ -15,7 +15,29 @@ from pulpcore.plugin.models import (
 )
 from pulpcore.plugin.util import get_domain_pk
 
+from pulp_nuget.app.nuspec import version_sort_key
+
 logger = getLogger(__name__)
+
+
+def retention_surplus(rows, retain):
+    """
+    The pks of content exceeding a package retention limit.
+
+    rows is an iterable of (pk, package_id_lower, version_normalized) tuples; for each
+    package id, every row beyond the ``retain`` highest versions (by NuGet/SemVer2
+    precedence, so prereleases rank just below their release) is surplus.
+    """
+    by_id = {}
+    for pk, package_id_lower, version in rows:
+        by_id.setdefault(package_id_lower, []).append((pk, version))
+    surplus = []
+    for versions in by_id.values():
+        if len(versions) <= retain:
+            continue
+        versions.sort(key=lambda item: version_sort_key(item[1]), reverse=True)
+        surplus.extend(pk for pk, _version in versions[retain:])
+    return surplus
 
 
 class NugetPackageContent(Content):
@@ -141,6 +163,11 @@ class NugetRemote(Remote, AutoAddObjPermsMixin):
 class NugetRepository(Repository, AutoAddObjPermsMixin):
     """
     A Repository for NuGet packages and symbol packages.
+
+    When retain_package_versions is set, every new repository version keeps only that
+    many versions of each package id (newest by NuGet precedence); older ones are
+    removed from the new version regardless of how content was added (sync, push,
+    upload, or modify).
     """
 
     TYPE = "nuget"
@@ -150,6 +177,20 @@ class NugetRepository(Repository, AutoAddObjPermsMixin):
 
     # State of the last sync, used to skip syncs when nothing changed (like pulp_file).
     last_sync_details = models.JSONField(default=dict)
+    # Keep only this many versions of each package id per repository version (0 = all).
+    retain_package_versions = models.PositiveIntegerField(default=0)
+
+    def finalize_new_version(self, new_version):
+        """Apply the package retention policy to a repository version being created."""
+        if not self.retain_package_versions:
+            return
+        for content_model in self.CONTENT_TYPES:
+            rows = content_model.objects.filter(pk__in=new_version.content).values_list(
+                "pk", "package_id_lower", "version_normalized"
+            )
+            surplus_pks = retention_surplus(rows, self.retain_package_versions)
+            if surplus_pks:
+                new_version.remove_content(content_model.objects.filter(pk__in=surplus_pks))
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
