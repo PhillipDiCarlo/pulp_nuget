@@ -90,6 +90,12 @@ def test_replicate_from_upstream_pulp(
             "tls_validation": False,
             # Scope the replication to just our upstream distribution.
             "q_select": f'name="{distribution.name}"',
+            # This test replicates an instance FROM ITSELF, so the source distribution
+            # collides by name with the distribution replication manages. The labeled
+            # policy leaves pre-existing (unlabeled) objects alone; without it, older
+            # pulpcore (<= 3.112) rebinds the source distribution to the still-empty
+            # replica repository concurrently with the sync that reads from it.
+            "policy": "labeled",
         },
     )
     try:
@@ -111,13 +117,13 @@ def test_replicate_from_upstream_pulp(
     replica_repo = replica_repos.results[0]
     assert _repo_package_ids(nuget_bindings, replica_repo.pulp_href) == set(package_ids)
 
-    # The distribution now serves the replica repository. Depending on the pulpcore
-    # version, replication binds it to the repository directly (<= 3.112) or pins it
-    # to the repository's latest version in the finalize step.
+    # With the labeled policy, older pulpcore leaves the unmanaged source distribution
+    # untouched, while newer pulpcore's finalize step pins it to the replica
+    # repository's latest version. Either way it keeps serving the same content.
     refreshed = nuget_bindings.DistributionsNugetApi.read(distribution.pulp_href)
     replica_repo = nuget_bindings.RepositoriesNugetApi.read(replica_repo.pulp_href)
     assert (
-        refreshed.repository == replica_repo.pulp_href
+        refreshed.repository == distribution.repository
         or refreshed.repository_version == replica_repo.latest_version_href
     )
 
