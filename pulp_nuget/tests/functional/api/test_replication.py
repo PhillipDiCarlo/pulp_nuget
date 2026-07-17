@@ -2,6 +2,7 @@
 
 import uuid
 
+import pydantic
 import pytest
 
 
@@ -91,7 +92,11 @@ def test_replicate_from_upstream_pulp(
             "q_select": f'name="{distribution.name}"',
         },
     )
-    response = pulpcore_bindings.UpstreamPulpsApi.replicate(server.pulp_href, {})
+    try:
+        response = pulpcore_bindings.UpstreamPulpsApi.replicate(server.pulp_href, {})
+    except (TypeError, pydantic.ValidationError):
+        # pulpcore < 3.113: the replicate action takes no request body.
+        response = pulpcore_bindings.UpstreamPulpsApi.replicate(server.pulp_href)
     monitor_task_group(response.task_group)
 
     # Replication created a remote and a repository named after the distribution.
