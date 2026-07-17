@@ -46,6 +46,9 @@ pulp_settings:
   # trips an UnboundLocalError in pulpcore.content.handler.Handler.auth_cached and
   # turns our 401 into a 500. Untested with caching on until that's fixed upstream.
   cache_enabled: false
+  # Let the import/export functional tests round-trip an archive through /tmp.
+  allowed_export_paths: ["/tmp"]
+  allowed_import_paths: ["/tmp"]
 pulp_settings_azure:
   MEDIA_ROOT: ""
   STORAGES:
