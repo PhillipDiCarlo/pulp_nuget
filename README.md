@@ -36,6 +36,9 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
 - **Retention**: set `retain_package_versions` on a repository to keep only the
   newest N versions of each package id in new repository versions, whatever the
   content path (sync, push, upload, modify).
+- **Import/export**: move repositories to air-gapped instances with pulpcore's
+  PulpExporter/PulpImporter; packages and symbol packages round-trip with all
+  parsed metadata.
 - **Private feeds**: protect a distribution with a `NugetContentGuard`. It grants
   access by RBAC role (`nuget.nugetcontentguard_downloader`) and challenges anonymous
   requests with `401 WWW-Authenticate: Basic` — which real NuGet clients require
