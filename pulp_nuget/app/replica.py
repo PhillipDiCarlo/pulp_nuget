@@ -67,6 +67,15 @@ class NugetReplicator(Replicator):
         """A replica mirrors everything the upstream distribution serves."""
         return {"includes": ["*"]}
 
+    def distribution_extra_fields(self, repository, upstream_distribution):
+        """The base fields minus "publication", which our serializer rejects."""
+        fields = super().distribution_extra_fields(repository, upstream_distribution)
+        # Older pulpcore includes "publication": None to clear publication-based
+        # distributions; pulp_nuget has no publications and NugetDistributionSerializer
+        # fails unknown fields with "Unexpected field".
+        fields.pop("publication", None)
+        return fields
+
     def sync_params(self, repository, remote):
         """Sync in mirror mode so removals on the upstream propagate."""
         return dict(

@@ -111,11 +111,15 @@ def test_replicate_from_upstream_pulp(
     replica_repo = replica_repos.results[0]
     assert _repo_package_ids(nuget_bindings, replica_repo.pulp_href) == set(package_ids)
 
-    # The distribution now serves the replica repository (pinned to its latest version).
+    # The distribution now serves the replica repository. Depending on the pulpcore
+    # version, replication binds it to the repository directly (<= 3.112) or pins it
+    # to the repository's latest version in the finalize step.
     refreshed = nuget_bindings.DistributionsNugetApi.read(distribution.pulp_href)
     replica_repo = nuget_bindings.RepositoriesNugetApi.read(replica_repo.pulp_href)
-    assert refreshed.repository is None
-    assert refreshed.repository_version == replica_repo.latest_version_href
+    assert (
+        refreshed.repository == replica_repo.pulp_href
+        or refreshed.repository_version == replica_repo.latest_version_href
+    )
 
     # Clean up what replication created (the distribution's fixture cleans itself up).
     monitor_task(nuget_bindings.RepositoriesNugetApi.delete(replica_repo.pulp_href).task)
