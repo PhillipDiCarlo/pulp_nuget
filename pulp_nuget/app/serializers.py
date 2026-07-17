@@ -291,9 +291,22 @@ class NugetRepositorySerializer(platform.RepositorySerializer):
         help_text=_("State of the last successful sync, used for sync optimization."),
         read_only=True,
     )
+    retain_package_versions = serializers.IntegerField(
+        help_text=_(
+            "Keep only this many versions of each package id in new repository versions "
+            "(newest by NuGet precedence; prereleases rank just below their release). "
+            "Applied whenever content is added by sync, push, upload, or modify. "
+            "0 (the default) keeps all versions."
+        ),
+        min_value=0,
+        required=False,
+    )
 
     class Meta:
-        fields = platform.RepositorySerializer.Meta.fields + ("last_sync_details",)
+        fields = platform.RepositorySerializer.Meta.fields + (
+            "last_sync_details",
+            "retain_package_versions",
+        )
         model = models.NugetRepository
 
 

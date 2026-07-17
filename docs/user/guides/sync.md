@@ -56,3 +56,19 @@ the checksums of the upstream registration indexes are recorded on the repositor
 Version-range filters also avoid downloading registration pages whose version window
 can't match — syncing `Serilog [4.0.0,)` fetches a couple of pages, not all ~600
 versions' worth.
+
+## Keep only recent versions
+
+Set `retain_package_versions` on the repository to cap how many versions of each
+package id a repository version holds:
+
+```bash
+http --auth admin:password PATCH :5001<repo_href> retain_package_versions:=3
+```
+
+Every new repository version then keeps only the newest N versions per package id
+(by NuGet precedence — a prerelease ranks just below its release) and drops the
+rest, no matter how the content arrived: sync, `dotnet nuget push`, upload, or
+modify. Symbol packages are trimmed by the same rule. The default `0` keeps
+everything. Changing the setting does not rewrite existing repository versions; it
+applies from the next content change onward.
