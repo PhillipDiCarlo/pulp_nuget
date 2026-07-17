@@ -34,6 +34,14 @@ REGISTRATION_TYPES = (
     "RegistrationsBaseUrl/Versioned",
     "RegistrationsBaseUrl",
 )
+SEARCH_TYPES = (
+    "SearchQueryService/3.5.0",
+    "SearchQueryService/3.0.0-rc",
+    "SearchQueryService/3.0.0-beta",
+    "SearchQueryService",
+)
+# Page size for enumerating the upstream via search (the '*' wildcard).
+SEARCH_PAGE_SIZE = 200
 
 
 def _parse_filters(entries):
@@ -48,20 +56,53 @@ def _parse_filters(entries):
     return filters
 
 
-def _registrations_base(service_index, remote_url):
-    """The registrations base URL advertised by a service index."""
+def _service_resource(service_index, types, remote_url, resource_name):
+    """The URL of the preferred resource of the given types, or raise SyncError."""
     by_type = {}
     for resource in service_index.get("resources", []):
-        types = resource.get("@type")
-        types = types if isinstance(types, list) else [types]
-        for type_ in types:
+        resource_types = resource.get("@type")
+        resource_types = resource_types if isinstance(resource_types, list) else [resource_types]
+        for type_ in resource_types:
             by_type.setdefault(type_, resource["@id"])
-    for type_ in REGISTRATION_TYPES:
+    for type_ in types:
         if type_ in by_type:
             return by_type[type_].rstrip("/")
     raise SyncError(
-        _("The service index at {} advertises no registrations resource.").format(remote_url)
+        _("The service index at {} advertises no {} resource.").format(remote_url, resource_name)
     )
+
+
+def _registrations_base(service_index, remote_url):
+    """The registrations base URL advertised by a service index."""
+    return _service_resource(service_index, REGISTRATION_TYPES, remote_url, "registrations")
+
+
+def _enumerate_package_ids(remote, service_index):
+    """
+    Every package id the upstream's search service enumerates (the '*' wildcard).
+
+    Search is the only enumeration mechanism the NuGet v3 protocol offers. It hides
+    ids whose versions are all unlisted; those cannot be discovered and are skipped.
+    """
+    search_base = _service_resource(service_index, SEARCH_TYPES, remote.url, "search")
+    separator = "&" if "?" in search_base else "?"
+    package_ids = set()
+    skip = 0
+    while True:
+        url = (
+            f"{search_base}{separator}skip={skip}&take={SEARCH_PAGE_SIZE}"
+            "&prerelease=true&semVerLevel=2.0.0"
+        )
+        result = remote.get_downloader(url=url).fetch()
+        with open(result.path, "rb") as fp:
+            data = json.load(fp)
+        entries = data.get("data", [])
+        for item in entries:
+            if item.get("id"):
+                package_ids.add(item["id"].lower())
+        skip += len(entries)
+        if not entries or skip >= data.get("totalHits", 0):
+            return package_ids
 
 
 def _should_optimize_sync(sync_details, last_sync_details, version):
@@ -116,17 +157,9 @@ def synchronize(remote_pk, repository_pk, mirror, optimize=True):
         raise SyncError(
             _("The remote must specify a non-empty 'includes' package allowlist to synchronize.")
         )
-
-    includes = _parse_filters(remote.includes)
-    excludes = _parse_filters(remote.excludes)
-    # An exclude entry without a version range drops the package id entirely.
-    package_ids = sorted(
-        package_id
-        for package_id in includes
-        if not any(version_range is None for version_range in excludes.get(package_id, []))
-    )
-    if not package_ids:
-        raise SyncError(_("Every package in 'includes' is matched by 'excludes'."))
+    wildcard = "*" in (entry.strip() for entry in remote.includes)
+    if wildcard and len(remote.includes) > 1:
+        raise SyncError(_("'*' matches every package and must be the only includes entry."))
 
     # Fetch the service index and every registration index up front: their checksums
     # decide whether the sync can be skipped, and the first stage reuses the documents.
@@ -134,6 +167,22 @@ def synchronize(remote_pk, repository_pk, mirror, optimize=True):
     with open(service_index_result.path, "rb") as fp:
         service_index = json.load(fp)
     registrations_base = _registrations_base(service_index, remote.url)
+
+    if wildcard:
+        includes = {
+            package_id: [None] for package_id in _enumerate_package_ids(remote, service_index)
+        }
+    else:
+        includes = _parse_filters(remote.includes)
+    excludes = _parse_filters(remote.excludes)
+    # An exclude entry without a version range drops the package id entirely.
+    package_ids = sorted(
+        package_id
+        for package_id in includes
+        if not any(version_range is None for version_range in excludes.get(package_id, []))
+    )
+    if not package_ids and not wildcard:
+        raise SyncError(_("Every package in 'includes' is matched by 'excludes'."))
 
     registration_indexes = {}
     registration_checksums = {}

@@ -236,7 +236,9 @@ class NugetRemoteSerializer(platform.RemoteSerializer):
             "A list of packages to sync. Each entry is a package id (case-insensitive), "
             "optionally followed by a space and a NuGet version range, e.g. "
             "'Serilog' or 'Serilog [2.0,3.0)'. A range only matches prerelease versions "
-            "when one of its bounds has a prerelease label (e.g. '[2.0.0-alpha,3.0)')."
+            "when one of its bounds has a prerelease label (e.g. '[2.0.0-alpha,3.0)'). "
+            "The single entry '*' mirrors every package the upstream's search service "
+            "enumerates — intended for Pulp-to-Pulp replication and small feeds."
         ),
         default=list,
     )
@@ -272,6 +274,12 @@ class NugetRemoteSerializer(platform.RemoteSerializer):
         return value
 
     def validate_includes(self, value):
+        if "*" in (entry.strip() for entry in value):
+            if len(value) > 1:
+                raise serializers.ValidationError(
+                    _("'*' matches every package and must be the only includes entry.")
+                )
+            return value
         return self._validate_filter_list(value)
 
     def validate_excludes(self, value):

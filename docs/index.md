@@ -24,4 +24,5 @@ Only the v3 protocol is implemented; there is no v2/OData support.
 - [Mirror packages from an upstream feed](site:pulp_nuget/docs/user/guides/sync/)
 - [Push packages with the dotnet CLI](site:pulp_nuget/docs/user/guides/push/)
 - [Export and import repositories](site:pulp_nuget/docs/user/guides/import-export/)
+- [Replicate another Pulp instance](site:pulp_nuget/docs/user/guides/replication/)
 - [Protect a feed with authentication](site:pulp_nuget/docs/admin/guides/private-feeds/)
