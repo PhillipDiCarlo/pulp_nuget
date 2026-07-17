@@ -39,6 +39,9 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
 - **Import/export**: move repositories to air-gapped instances with pulpcore's
   PulpExporter/PulpImporter; packages and symbol packages round-trip with all
   parsed metadata.
+- **Replication**: a downstream Pulp can auto-mirror all nuget distributions of an
+  upstream Pulp (`UpstreamPulp` + replicate), powered by the `includes=["*"]`
+  wildcard that syncs everything a feed's search service enumerates.
 - **Private feeds**: protect a distribution with a `NugetContentGuard`. It grants
   access by RBAC role (`nuget.nugetcontentguard_downloader`) and challenges anonymous
   requests with `401 WWW-Authenticate: Basic` — which real NuGet clients require
