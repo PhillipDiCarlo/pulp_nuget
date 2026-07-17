@@ -4,11 +4,13 @@ The `pulp_nuget` plugin extends [pulpcore](site:pulpcore/) to host NuGet package
 
 ## Overview
 
-A `pulp_nuget` repository holds `.nupkg` packages. Each distribution serves a live
-**NuGet v3 API** — service index, flat container, registrations, and search — generated
-from the repository's latest version, so there is no publish step. Real clients
-(`dotnet`, `nuget.exe`, Visual Studio) can restore from it, push to it with
-`dotnet nuget push`, and unlist versions with `dotnet nuget delete`.
+A `pulp_nuget` repository holds `.nupkg` packages and `.snupkg` symbol packages. Each
+distribution serves a live **NuGet v3 API** — service index, flat container,
+registrations, and search — generated from the repository's latest version, so there
+is no publish step. Real clients (`dotnet`, `nuget.exe`, Visual Studio) can restore
+from it, push to it with `dotnet nuget push`, and unlist versions with
+`dotnet nuget delete`; stored symbol packages make the distribution an SSQP symbol
+server for debuggers.
 
 Repositories can also **sync** an allowlist of package ids from any upstream NuGet v3
 feed (such as nuget.org), either downloading everything immediately or fetching

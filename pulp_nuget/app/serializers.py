@@ -10,6 +10,7 @@ from pulpcore.plugin.util import get_domain_pk
 
 from . import models
 from .nuspec import InvalidNupkgError, InvalidVersionRangeError, parse_nupkg, parse_package_filter
+from .symbols import parse_snupkg
 
 
 class NugetPackageSerializer(
@@ -119,6 +120,86 @@ class NugetPackageSerializer(
                 "dependency_groups",
                 "package_types",
                 "listed",
+            )
+        )
+
+
+class NugetSymbolPackageSerializer(
+    platform.SingleArtifactContentUploadSerializer, platform.ContentChecksumSerializer
+):
+    """
+    A Serializer for NugetSymbolPackageContent.
+
+    Symbol packages are created by uploading a .snupkg file; the id and version are
+    parsed from the embedded .nuspec, and each portable PDB's SSQP identity is
+    extracted so the distribution can serve it to debuggers.
+    """
+
+    # The snupkg location is derived from the parsed metadata, not user input.
+    relative_path = None
+
+    package_id = serializers.CharField(help_text=_("The NuGet package id."), read_only=True)
+    version = serializers.CharField(
+        help_text=_("The package version as authored in the .nuspec."), read_only=True
+    )
+    version_normalized = serializers.CharField(
+        help_text=_("The lowercase NuGet-normalized SemVer2 version."), read_only=True
+    )
+    pdb_files = serializers.JSONField(
+        help_text=_(
+            "The portable PDBs in the package: archive path, lowercased file name, and "
+            "SSQP signature of each."
+        ),
+        read_only=True,
+    )
+
+    def deferred_validate(self, data):
+        """Parse the manifest and the PDB identities out of the artifact."""
+        data = super().deferred_validate(data)
+
+        artifact = data["artifact"]
+        try:
+            with artifact.file.open("rb") as fp:
+                metadata = parse_snupkg(fp)
+        except InvalidNupkgError as exc:
+            raise serializers.ValidationError(
+                _("The file is not a valid NuGet symbol package: {}").format(exc)
+            )
+
+        metadata["package_id_lower"] = metadata["package_id"].lower()
+        data.update(metadata)
+        return data
+
+    def retrieve(self, validated_data):
+        """Return an existing symbol package with the same natural key if there is one."""
+        return models.NugetSymbolPackageContent.objects.filter(
+            package_id_lower=validated_data["package_id_lower"],
+            version_normalized=validated_data["version_normalized"],
+            pulp_domain=get_domain_pk(),
+        ).first()
+
+    def get_artifacts(self, validated_data):
+        """Map the artifact to its flat-container relative path."""
+        artifact = validated_data.pop("artifact")
+        relative_path = (
+            "{package_id_lower}/{version_normalized}/{package_id_lower}.{version_normalized}.snupkg"
+        ).format(**validated_data)
+        return {relative_path: artifact}
+
+    class Meta:
+        model = models.NugetSymbolPackageContent
+        fields = (
+            tuple(
+                f
+                for f in platform.SingleArtifactContentUploadSerializer.Meta.fields
+                if f != "relative_path"
+            )
+            + platform.ContentChecksumSerializer.Meta.fields
+            + (
+                "package_id",
+                "version",
+                "version_normalized",
+                "pdb_files",
             )
         )
 

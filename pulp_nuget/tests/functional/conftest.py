@@ -1,4 +1,5 @@
 import os
+import struct
 import uuid
 import zipfile
 
@@ -133,6 +134,57 @@ def nupkg_factory(tmp_path):
         return str(path)
 
     return _nupkg_factory
+
+
+@pytest.fixture
+def portable_pdb_factory():
+    """Build a minimal portable PDB; returns (pdb_bytes, ssqp_signature)."""
+
+    def _portable_pdb_factory(guid=None):
+        guid = guid or uuid.uuid4()
+        pdb_id = guid.bytes_le + b"\x01\x00\x00\x00"
+        # An ECMA-335 metadata root with a single #Pdb stream holding the PDB id.
+        version = b"PDB v1.0" + b"\0" * 4
+        prefix = (
+            b"BSJB"
+            + struct.pack("<HH", 1, 1)
+            + b"\0" * 4
+            + struct.pack("<I", len(version))
+            + version
+        )
+        header_tail = struct.pack("<HH", 0, 1)
+        name_bytes = b"#Pdb\0" + b"\0" * 3
+        data_offset = len(prefix) + len(header_tail) + 8 + len(name_bytes)
+        headers = struct.pack("<II", data_offset, len(pdb_id)) + name_bytes
+        return prefix + header_tail + headers + pdb_id, guid.hex + "ffffffff"
+
+    return _portable_pdb_factory
+
+
+@pytest.fixture
+def snupkg_factory(tmp_path):
+    """Build a minimal synthetic .snupkg on disk and return its path."""
+
+    def _snupkg_factory(package_id, version, pdbs):
+        # pdbs is a list of ("path/in/package", pdb_bytes) pairs.
+        nuspec = f"""<?xml version="1.0"?>
+        <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+          <metadata>
+            <id>{package_id}</id>
+            <version>{version}</version>
+            <authors>pulp_nuget tests</authors>
+            <description>A synthetic symbol package.</description>
+            <packageTypes><packageType name="SymbolsPackage" /></packageTypes>
+          </metadata>
+        </package>"""
+        path = tmp_path / f"{package_id}.{version}.snupkg"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(f"{package_id}.nuspec", nuspec)
+            for inner_path, data in pdbs:
+                archive.writestr(inner_path, data)
+        return str(path)
+
+    return _snupkg_factory
 
 
 @pytest.fixture

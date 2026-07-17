@@ -68,6 +68,62 @@ class NugetPackageViewSet(core.SingleArtifactContentUploadViewSet):
     }
 
 
+class NugetSymbolPackageFilter(core.ContentFilter):
+    """
+    FilterSet for NugetSymbolPackageContent.
+    """
+
+    package_id = CharFilter(field_name="package_id_lower", lookup_expr="iexact")
+    version = CharFilter(field_name="version_normalized", lookup_expr="iexact")
+
+    class Meta:
+        model = models.NugetSymbolPackageContent
+        fields = ["package_id", "version"]
+
+
+class NugetSymbolPackageViewSet(core.SingleArtifactContentUploadViewSet):
+    """
+    A ViewSet for NugetSymbolPackageContent.
+
+    Symbol packages are created by uploading a .snupkg file; the metadata and the PDB
+    identities are parsed from the archive.
+    """
+
+    endpoint_name = "symbol_packages"
+    queryset = models.NugetSymbolPackageContent.objects.prefetch_related("_artifacts")
+    serializer_class = serializers.NugetSymbolPackageSerializer
+    filterset_class = NugetSymbolPackageFilter
+
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["list", "retrieve"],
+                "principal": "authenticated",
+                "effect": "allow",
+            },
+            {
+                "action": ["create"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_required_repo_perms_on_upload:nuget.modify_nugetrepository",
+                    "has_required_repo_perms_on_upload:nuget.view_nugetrepository",
+                    "has_upload_param_model_or_domain_or_obj_perms:core.change_upload",
+                ],
+            },
+            {
+                "action": ["set_label", "unset_label"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_perms:core.manage_content_labels",
+                ],
+            },
+        ],
+        "queryset_scoping": {"function": "scope_queryset"},
+    }
+
+
 class NugetRemoteViewSet(core.RemoteViewSet, core.RolesMixin):
     """
     A ViewSet for NugetRemote.
