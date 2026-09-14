@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db import models
 
 from pulpcore.plugin.models import (
+    AlternateContentSource,
     AutoAddObjPermsMixin,
     Content,
     ContentGuard,
@@ -199,6 +200,29 @@ class NugetRepository(Repository, AutoAddObjPermsMixin):
             ("modify_nugetrepository", "Can modify content of the repository"),
             ("manage_roles_nugetrepository", "Can manage roles on nuget repositories"),
             ("repair_nugetrepository", "Can repair repository versions"),
+        ]
+
+
+class NugetAlternateContentSource(AlternateContentSource, AutoAddObjPermsMixin):
+    """
+    An alternate content source for NuGet packages.
+
+    Refreshing indexes the packages of each path's feed into a hidden on_demand
+    repository. Syncs then download a package from an alternate source that has the same
+    package id and version before falling back to the remote, and on_demand content is
+    streamed from an alternate source first. NuGet feeds publish no checksums before a
+    package is downloaded, so copies are matched by identity: a published id and version
+    can never change.
+    """
+
+    TYPE = "nuget"
+    REMOTE_TYPES = [NugetRemote]
+
+    class Meta:
+        default_related_name = "%(app_label)s_%(model_name)s"
+        permissions = [
+            ("refresh_nugetalternatecontentsource", "Can refresh ACS metadata"),
+            ("manage_roles_nugetalternatecontentsource", "Can manage roles on nuget ACS"),
         ]
 
 

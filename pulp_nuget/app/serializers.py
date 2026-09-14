@@ -333,6 +333,37 @@ class NugetRepositorySyncURLSerializer(platform.RepositorySyncURLSerializer):
     )
 
 
+class NugetAlternateContentSourceSerializer(platform.AlternateContentSourceSerializer):
+    """
+    A Serializer for NugetAlternateContentSource.
+
+    Each path is a service index location relative to the remote's url (e.g.
+    ``feed-a/v3/index.json`` under ``https://mirror.example/content/``); without paths,
+    the remote's url itself must be a service index.
+    """
+
+    def validate_remote(self, remote):
+        remote = super().validate_remote(remote)
+        if not remote.includes:
+            raise serializers.ValidationError(
+                _(
+                    "The remote must specify a non-empty 'includes' package allowlist; "
+                    "'*' indexes every package the feed's search service enumerates."
+                )
+            )
+        return remote
+
+    def validate_paths(self, paths):
+        for path in paths:
+            if path.startswith("/"):
+                raise serializers.ValidationError(_("Path cannot start with a slash."))
+        return paths
+
+    class Meta:
+        fields = platform.AlternateContentSourceSerializer.Meta.fields
+        model = models.NugetAlternateContentSource
+
+
 class NugetContentGuardSerializer(platform.ContentGuardSerializer):
     """
     A Serializer for NugetContentGuard.

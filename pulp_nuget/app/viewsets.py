@@ -1,12 +1,17 @@
 """Viewsets for the pulp_nuget plugin."""
 
+from django.utils.timezone import now
 from django_filters import CharFilter
 from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import action
 
 from pulpcore.plugin import viewsets as core
 from pulpcore.plugin.actions import ModifyRepositoryActionMixin
-from pulpcore.plugin.serializers import AsyncOperationResponseSerializer
+from pulpcore.plugin.models import TaskGroup
+from pulpcore.plugin.serializers import (
+    AsyncOperationResponseSerializer,
+    TaskGroupOperationResponseSerializer,
+)
 from pulpcore.plugin.tasking import dispatch
 
 from . import models, serializers, tasks
@@ -457,6 +462,144 @@ class NugetContentGuardViewSet(core.ContentGuardViewSet, core.RolesMixin):
         # distributions protected by the guard.
         "nuget.nugetcontentguard_downloader": ["nuget.download_nugetcontentguard"],
     }
+
+
+class NugetAlternateContentSourceViewSet(core.AlternateContentSourceViewSet, core.RolesMixin):
+    """
+    A ViewSet for NugetAlternateContentSource.
+    """
+
+    endpoint_name = "nuget"
+    queryset = models.NugetAlternateContentSource.objects.all()
+    serializer_class = serializers.NugetAlternateContentSourceSerializer
+    queryset_filtering_required_permission = "nuget.view_nugetalternatecontentsource"
+
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["list", "my_permissions"],
+                "principal": "authenticated",
+                "effect": "allow",
+            },
+            {
+                "action": ["create"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_perms:nuget.add_nugetalternatecontentsource",
+                    "has_remote_param_model_or_domain_or_obj_perms:nuget.view_nugetremote",
+                ],
+            },
+            {
+                "action": ["retrieve"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": "has_model_or_domain_or_obj_perms:"
+                "nuget.view_nugetalternatecontentsource",
+            },
+            {
+                "action": ["update", "partial_update"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:nuget.change_nugetalternatecontentsource",
+                    "has_model_or_domain_or_obj_perms:nuget.view_nugetalternatecontentsource",
+                    "has_remote_param_model_or_domain_or_obj_perms:nuget.view_nugetremote",
+                ],
+            },
+            {
+                "action": ["destroy"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:nuget.delete_nugetalternatecontentsource",
+                    "has_model_or_domain_or_obj_perms:nuget.view_nugetalternatecontentsource",
+                ],
+            },
+            {
+                "action": ["refresh"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:nuget.refresh_nugetalternatecontentsource",
+                    "has_model_or_domain_or_obj_perms:nuget.view_nugetalternatecontentsource",
+                ],
+            },
+            {
+                "action": ["list_roles", "add_role", "remove_role"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:"
+                    "nuget.manage_roles_nugetalternatecontentsource"
+                ],
+            },
+        ],
+        "creation_hooks": [
+            {
+                "function": "add_roles_for_object_creator",
+                "parameters": {"roles": "nuget.nugetalternatecontentsource_owner"},
+            },
+        ],
+        "queryset_scoping": {"function": "scope_queryset"},
+    }
+    LOCKED_ROLES = {
+        "nuget.nugetalternatecontentsource_creator": ["nuget.add_nugetalternatecontentsource"],
+        "nuget.nugetalternatecontentsource_owner": [
+            "nuget.view_nugetalternatecontentsource",
+            "nuget.change_nugetalternatecontentsource",
+            "nuget.delete_nugetalternatecontentsource",
+            "nuget.refresh_nugetalternatecontentsource",
+            "nuget.manage_roles_nugetalternatecontentsource",
+        ],
+        "nuget.nugetalternatecontentsource_viewer": ["nuget.view_nugetalternatecontentsource"],
+    }
+
+    @extend_schema(
+        description="Trigger an asynchronous task to index the packages of each ACS path.",
+        summary="Refresh metadata",
+        request=None,
+        responses={202: TaskGroupOperationResponseSerializer},
+    )
+    @action(detail=True, methods=["post"])
+    def refresh(self, request, pk, **kwargs):
+        """
+        Dispatch one on_demand sync per path into the path's hidden repository.
+        """
+        acs = self.get_object()
+        acs_paths = acs.paths.all()
+        task_group = TaskGroup.objects.create(
+            description=f"Refreshing {acs_paths.count()} alternate content source path(s)."
+        )
+
+        for acs_path in acs_paths:
+            if acs_path.repository_id is None:
+                acs_path.repository, _created = models.NugetRepository.objects.get_or_create(
+                    name=f"{acs.name}--{acs_path.pk}--repository",
+                    retain_repo_versions=1,
+                    user_hidden=True,
+                )
+                acs_path.save()
+            url = acs.remote.url
+            if acs_path.path:
+                url = f"{url.rstrip('/')}/{acs_path.path}"
+            dispatch(
+                tasks.synchronize,
+                shared_resources=[acs.remote, acs],
+                exclusive_resources=[acs_path.repository],
+                task_group=task_group,
+                kwargs={
+                    "remote_pk": str(acs.remote.pk),
+                    "repository_pk": str(acs_path.repository_id),
+                    "mirror": True,
+                    "url": url,
+                },
+            )
+
+        acs.last_refreshed = now()
+        acs.save()
+
+        return core.TaskGroupOperationResponse(task_group, request)
 
 
 class NugetDistributionViewSet(core.DistributionViewSet, core.RolesMixin):
