@@ -1,4 +1,7 @@
 * [Upload and Host Packages](upload-host.md)
 * [Mirror an Upstream Feed](sync.md)
+* [Download from Alternate Content Sources](acs.md)
 * [Push with the dotnet CLI](push.md)
 * [Unlist and Relist Versions](unlist.md)
+* [Export and Import Repositories](import-export.md)
+* [Replicate Another Pulp Instance](replication.md)
