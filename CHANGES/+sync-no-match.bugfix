@@ -1,0 +1,2 @@
+A sync whose ``includes`` match no package on the remote now fails. It used to succeed,
+and with ``mirror=true`` it removed everything from the repository.

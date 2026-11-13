@@ -472,6 +472,33 @@ def test_sync_requires_includes(
     assert "includes" in task.error["description"]
 
 
+def test_sync_fails_when_no_included_package_exists(
+    nuget_bindings,
+    pulpcore_bindings,
+    nuget_repo,
+    newtonsoft_package_factory,
+    remote_factory,
+    monitor_task,
+):
+    """A sync whose allowlist matches nothing upstream fails instead of emptying a mirror."""
+    newtonsoft_package_factory(repository=nuget_repo.pulp_href)
+    before = nuget_bindings.RepositoriesNugetApi.read(nuget_repo.pulp_href).latest_version_href
+    remote = remote_factory(includes=[f"Pulp.Nuget.No.Such.Package.{uuid.uuid4().hex}"])
+
+    task_href = nuget_bindings.RepositoriesNugetApi.sync(
+        nuget_repo.pulp_href, {"remote": remote.pulp_href, "mirror": True}
+    ).task
+    with pytest.raises(Exception):
+        monitor_task(task_href)
+    task = pulpcore_bindings.TasksApi.read(task_href)
+    assert task.state == "failed"
+    assert "includes" in task.error["description"]
+
+    # The repository is untouched.
+    repository = nuget_bindings.RepositoriesNugetApi.read(nuget_repo.pulp_href)
+    assert repository.latest_version_href == before
+
+
 def test_push_conflicting_package_is_rejected(
     nuget_repo,
     nuget_distribution_factory,

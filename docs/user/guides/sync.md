@@ -46,6 +46,10 @@ The sync honors the upstream's `listed` flags, so versions unlisted on the upstr
 stay hidden from search in your mirror too. Passing `mirror=true` makes the
 repository version an exact mirror of the filtered selection, removing anything else.
 
+A package id in `includes` that the upstream does not have is skipped, with a warning
+in the Pulp worker log. If none of them exist, the sync fails instead, so a typo or a
+wrong `url` cannot turn a `mirror=true` sync into an empty repository.
+
 ## Repeated syncs are cheap
 
 The sync is skipped entirely when nothing changed: the remote's configuration, the
