@@ -17,20 +17,8 @@ source .github/workflows/scripts/utils.sh
 
 PIP_REQUIREMENTS=("pulp-cli" "yq")
 
-# This must be the **only** call to "pip install" on the test runner.
-pip install ${PIP_REQUIREMENTS[*]}
-
-if [[ "$TEST" = "s3" ]]; then
-for i in {1..3}
-do
-  ansible-galaxy collection install "amazon.aws:11.1.0" && s=0 && break || s=$? && sleep 3
-done
-if [[ $s -gt 0 ]]
-then
-  echo "Failed to install amazon.aws"
-  exit $s
-fi
-fi
+# This must be the **only** package install on the test runner.
+uv pip install ${PIP_REQUIREMENTS[*]}
 
 PULP_API_ROOT="$(yq -r '.pulp_scenario_settings.api_root // .pulp_settings.api_root // "/pulp/"' < .ci/ansible/vars/main.yaml)"
 
