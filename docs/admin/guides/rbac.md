@@ -14,6 +14,7 @@ permissions on, and object creators automatically become owners.
 | `nuget.nugetdistribution_publisher` | push, unlist, and relist via the distribution's publish endpoint |
 | `nuget.nugetcontentguard_creator` / `_owner` / `_viewer` | the same, for content guards |
 | `nuget.nugetcontentguard_downloader` | download through a guarded distribution |
+| `nuget.nugetalternatecontentsource_creator` / `_owner` / `_viewer` | the same, for alternate content sources; owners can also refresh them |
 
 Roles can be granted globally, on a single object, or — with
 [domains](site:pulpcore/docs/admin/guides/domain-multi-tenancy/) enabled — on a domain:

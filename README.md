@@ -42,6 +42,9 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
 - **Replication**: a downstream Pulp can auto-mirror all nuget distributions of an
   upstream Pulp (`UpstreamPulp` + replicate), powered by the `includes=["*"]`
   wildcard that syncs everything a feed's search service enumerates.
+- **Alternate content sources**: index a nearby mirror or another Pulp as an ACS, and
+  syncs download packages from it (matched by package id and version) before falling
+  back to their remote; on_demand content is streamed from it first.
 - **Private feeds**: protect a distribution with a `NugetContentGuard`. It grants
   access by RBAC role (`nuget.nugetcontentguard_downloader`) and challenges anonymous
   requests with `401 WWW-Authenticate: Basic` — which real NuGet clients require

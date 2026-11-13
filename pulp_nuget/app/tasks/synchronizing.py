@@ -6,17 +6,32 @@ from gettext import gettext as _
 from hashlib import sha256
 
 from aiohttp import ClientResponseError
+from asgiref.sync import sync_to_async
+from django.db.models import Q
 
 from pulpcore.plugin.exceptions import SyncError
-from pulpcore.plugin.models import Artifact, ProgressReport, Remote
+from pulpcore.plugin.models import (
+    AlternateContentSourcePath,
+    Artifact,
+    ProgressReport,
+    Remote,
+    RemoteArtifact,
+)
 from pulpcore.plugin.stages import (
+    ArtifactDownloader,
     DeclarativeArtifact,
     DeclarativeContent,
     DeclarativeVersion,
     Stage,
 )
+from pulpcore.plugin.util import get_domain_pk
 
-from pulp_nuget.app.models import NugetPackageContent, NugetRemote, NugetRepository
+from pulp_nuget.app.models import (
+    NugetAlternateContentSource,
+    NugetPackageContent,
+    NugetRemote,
+    NugetRepository,
+)
 from pulp_nuget.app.nuspec import (
     InvalidVersionRangeError,
     canonical_version,
@@ -77,23 +92,23 @@ def _registrations_base(service_index, remote_url):
     return _service_resource(service_index, REGISTRATION_TYPES, remote_url, "registrations")
 
 
-def _enumerate_package_ids(remote, service_index):
+def _enumerate_package_ids(remote, service_index, url):
     """
     Every package id the upstream's search service enumerates (the '*' wildcard).
 
     Search is the only enumeration mechanism the NuGet v3 protocol offers. It hides
     ids whose versions are all unlisted; those cannot be discovered and are skipped.
     """
-    search_base = _service_resource(service_index, SEARCH_TYPES, remote.url, "search")
+    search_base = _service_resource(service_index, SEARCH_TYPES, url, "search")
     separator = "&" if "?" in search_base else "?"
     package_ids = set()
     skip = 0
     while True:
-        url = (
+        page_url = (
             f"{search_base}{separator}skip={skip}&take={SEARCH_PAGE_SIZE}"
             "&prerelease=true&semVerLevel=2.0.0"
         )
-        result = remote.get_downloader(url=url).fetch()
+        result = remote.get_downloader(url=page_url).fetch()
         with open(result.path, "rb") as fp:
             data = json.load(fp)
         entries = data.get("data", [])
@@ -137,7 +152,7 @@ def _should_optimize_sync(sync_details, last_sync_details, version):
     return True
 
 
-def synchronize(remote_pk, repository_pk, mirror, optimize=True):
+def synchronize(remote_pk, repository_pk, mirror, optimize=True, url=None):
     """
     Create a new repository version synchronized with the remote's allowlisted packages.
 
@@ -147,11 +162,14 @@ def synchronize(remote_pk, repository_pk, mirror, optimize=True):
         mirror (bool): True for mirror mode, False for additive.
         optimize (bool): Skip the sync when the remote and the upstream registration
             indexes are unchanged since the last sync.
+        url (str): A service index URL to sync from instead of the remote's url (used
+            to refresh alternate content source paths).
     """
     remote = NugetRemote.objects.get(pk=remote_pk)
     repository = NugetRepository.objects.get(pk=repository_pk)
+    url = url or remote.url
 
-    if not remote.url:
+    if not url:
         raise SyncError(_("A remote must have a url specified to synchronize."))
     if not remote.includes:
         raise SyncError(
@@ -163,14 +181,14 @@ def synchronize(remote_pk, repository_pk, mirror, optimize=True):
 
     # Fetch the service index and every registration index up front: their checksums
     # decide whether the sync can be skipped, and the first stage reuses the documents.
-    service_index_result = remote.get_downloader(url=remote.url).fetch()
+    service_index_result = remote.get_downloader(url=url).fetch()
     with open(service_index_result.path, "rb") as fp:
         service_index = json.load(fp)
-    registrations_base = _registrations_base(service_index, remote.url)
+    registrations_base = _registrations_base(service_index, url)
 
     if wildcard:
         includes = {
-            package_id: [None] for package_id in _enumerate_package_ids(remote, service_index)
+            package_id: [None] for package_id in _enumerate_package_ids(remote, service_index, url)
         }
     else:
         includes = _parse_filters(remote.includes)
@@ -208,7 +226,7 @@ def synchronize(remote_pk, repository_pk, mirror, optimize=True):
     version = repository.latest_version()
     sync_details = {
         "remote_pk": str(remote.pk),
-        "url": remote.url,
+        "url": url,
         "download_policy": remote.policy,
         "mirror": mirror,
         "includes": sorted(remote.includes),
@@ -227,7 +245,11 @@ def synchronize(remote_pk, repository_pk, mirror, optimize=True):
         return
 
     first_stage = NugetFirstStage(remote, registration_indexes, includes, excludes)
-    repository_version = DeclarativeVersion(first_stage, repository, mirror=mirror).create()
+    # An alternate content source's own index repository never downloads from ACSes.
+    acs = not AlternateContentSourcePath.objects.filter(repository=repository).exists()
+    repository_version = NugetDeclarativeVersion(
+        first_stage, repository, mirror=mirror, acs=acs
+    ).create()
 
     if repository_version:
         sync_details["most_recent_version"] = repository_version.number
@@ -383,7 +405,7 @@ class NugetFirstStage(Stage):
                             entry["version"],
                         )
                         continue
-                    declarative_artifact = DeclarativeArtifact(
+                    declarative_artifact = NugetDeclarativeArtifact(
                         artifact=Artifact(),
                         url=url,
                         relative_path=package.relative_path,
@@ -394,3 +416,145 @@ class NugetFirstStage(Stage):
                         DeclarativeContent(content=package, d_artifacts=[declarative_artifact])
                     )
                 await progress.aincrement()
+
+
+def group_acs_sources(content_keys, remote_artifacts):
+    """
+    Group alternate content source copies by package.
+
+    content_keys maps a content pk to its (package_id_lower, version_normalized) key;
+    remote_artifacts is an iterable of (content pk, remote, url) tuples in preference
+    order. Returns a dict mapping each key to its [(remote, url), ...] copies.
+    """
+    sources = {}
+    for content_pk, remote, url in remote_artifacts:
+        key = content_keys.get(content_pk)
+        if key is not None:
+            sources.setdefault(key, []).append((remote, url))
+    return sources
+
+
+def _acs_sources(keys):
+    """The alternate content source copies of (package_id_lower, version_normalized) keys."""
+    matches = Q()
+    for package_id_lower, version_normalized in keys:
+        matches |= Q(package_id_lower=package_id_lower, version_normalized=version_normalized)
+    content_keys = {
+        pk: (package_id_lower, version_normalized)
+        for pk, package_id_lower, version_normalized in NugetPackageContent.objects.filter(
+            matches, _pulp_domain=get_domain_pk()
+        ).values_list("pk", "package_id_lower", "version_normalized")
+    }
+    if not content_keys:
+        return {}
+    rows = (
+        RemoteArtifact.objects.acs()
+        .filter(content_artifact__content__in=list(content_keys))
+        .order_by("pulp_created")
+        .values_list("content_artifact__content", "remote", "url")
+    )
+    remotes = {}
+    remote_artifacts = []
+    for content_pk, remote_pk, url in rows:
+        if remote_pk not in remotes:
+            remotes[remote_pk] = NugetRemote.objects.get(pk=remote_pk)
+        remote_artifacts.append((content_pk, remotes[remote_pk], url))
+    return group_acs_sources(content_keys, remote_artifacts)
+
+
+class NugetDeclarativeArtifact(DeclarativeArtifact):
+    """
+    A DeclarativeArtifact that tries alternate content source copies before its url.
+
+    Each copy is downloaded with its own ACS remote's settings (credentials, proxy, TLS);
+    only when every copy fails does the download fall back to the sync remote. The sync
+    remote stays the artifact's remote, so on_demand content keeps a remote artifact
+    for it.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.alternate_sources = []
+
+    async def download(self):
+        for remote, url in self.alternate_sources:
+            downloader = remote.get_downloader(url=url)
+            try:
+                download_result = await downloader.run(extra_data=self.extra_data)
+            except Exception as exc:
+                log.warning(
+                    "Could not download '%s' from alternate content source '%s': %s. "
+                    "Trying the next source.",
+                    url,
+                    remote.name,
+                    exc,
+                )
+                continue
+            self.artifact = Artifact(
+                **download_result.artifact_attributes, file=download_result.path
+            )
+            return download_result
+        return await super().download()
+
+
+class NugetACSArtifactHandler(Stage):
+    """
+    Point package downloads at alternate content sources that have the same package.
+
+    pulpcore's ACSArtifactHandler matches by checksum, but NuGet feeds publish no
+    checksums before download, so it never matches. A published package id and version
+    can never change, so ACS copies are matched by the content's natural key instead.
+    Deferred artifacts are left alone: the content app already streams on_demand
+    content from an ACS copy first.
+    """
+
+    async def run(self):
+        async for batch in self.batches():
+            pending = {}
+            for d_content in batch:
+                content = d_content.content
+                if not isinstance(content, NugetPackageContent):
+                    continue
+                for d_artifact in d_content.d_artifacts:
+                    if (
+                        isinstance(d_artifact, NugetDeclarativeArtifact)
+                        and not d_artifact.deferred_download
+                        and d_artifact.artifact._state.adding
+                    ):
+                        key = (content.package_id_lower, content.version_normalized)
+                        pending.setdefault(key, []).append(d_artifact)
+            if pending:
+                sources = await sync_to_async(_acs_sources)(list(pending))
+                for key, copies in sources.items():
+                    for d_artifact in pending[key]:
+                        d_artifact.alternate_sources = copies
+            for d_content in batch:
+                await self.put(d_content)
+
+
+class NugetDeclarativeVersion(DeclarativeVersion):
+    """
+    A DeclarativeVersion that downloads packages from NuGet alternate content sources.
+
+    The acs flag enables NugetACSArtifactHandler (in place of pulpcore's checksum-based
+    handler, which can never match NuGet artifacts) when the domain has a NuGet
+    alternate content source.
+    """
+
+    def __init__(self, first_stage, repository, mirror=False, acs=False):
+        super().__init__(first_stage, repository, mirror=mirror, acs=False)
+        self.nuget_acs = acs
+
+    def pipeline_stages(self, new_version):
+        pipeline = super().pipeline_stages(new_version)
+        if (
+            self.nuget_acs
+            and NugetAlternateContentSource.objects.filter(pulp_domain=get_domain_pk()).exists()
+        ):
+            downloader_index = next(
+                index
+                for index, stage in enumerate(pipeline)
+                if isinstance(stage, ArtifactDownloader)
+            )
+            pipeline.insert(downloader_index, NugetACSArtifactHandler())
+        return pipeline
