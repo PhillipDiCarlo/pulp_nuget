@@ -470,3 +470,52 @@ def test_sync_requires_includes(
     task = pulpcore_bindings.TasksApi.read(task_href)
     assert task.state == "failed"
     assert "includes" in task.error["description"]
+
+
+def test_push_conflicting_package_is_rejected(
+    nuget_repo,
+    nuget_distribution_factory,
+    distribution_url_factory,
+    nupkg_factory,
+    bindings_cfg,
+    monitor_task,
+):
+    """Pushing a different file for an existing id and version is a 409, not a silent no-op."""
+    distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
+    response = requests.get(distribution_url_factory(distribution, "v3/index.json"))
+    response.raise_for_status()
+    publish_url = next(
+        resource["@id"]
+        for resource in response.json()["resources"]
+        if resource["@type"] == "PackagePublish/2.0.0"
+    )
+    auth = (bindings_cfg.username, bindings_cfg.password)
+
+    def push(data):
+        return requests.put(publish_url + "/", files={"package": ("p.nupkg", data)}, auth=auth)
+
+    # Unique id: content units outlive the test and are deduplicated by id and version.
+    package_id = f"Pulp.Push.{uuid.uuid4().hex[:8]}"
+    with open(nupkg_factory(package_id, "1.0.0"), "rb") as fp:
+        original = fp.read()
+    with open(nupkg_factory(package_id, "1.0.0", readme=("README.md", b"changed")), "rb") as fp:
+        changed = fp.read()
+    assert original != changed
+
+    response = push(original)
+    assert response.status_code == 202, response.text
+    monitor_task(response.json()["task"])
+
+    # Pushing the identical file again stays idempotent.
+    response = push(original)
+    assert response.status_code == 202, response.text
+    monitor_task(response.json()["task"])
+
+    # A different file for the same id and version is refused, and the original stays.
+    response = push(changed)
+    assert response.status_code == 409, response.text
+    nupkg_url = distribution_url_factory(
+        distribution,
+        f"v3-flatcontainer/{package_id.lower()}/1.0.0/{package_id.lower()}.1.0.0.nupkg",
+    )
+    assert requests.get(nupkg_url).content == original
