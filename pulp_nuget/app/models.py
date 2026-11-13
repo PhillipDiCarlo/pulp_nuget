@@ -9,6 +9,7 @@ from pulpcore.plugin.models import (
     AlternateContentSource,
     AutoAddObjPermsMixin,
     Content,
+    ContentArtifact,
     ContentGuard,
     Distribution,
     ProgressReport,
@@ -43,6 +44,25 @@ def retention_surplus(rows, retain):
         for version in ranked[retain:]:
             surplus.extend(versions[version])
     return surplus
+
+
+def stored_file_differs(model, package_id_lower, version_normalized, sha256):
+    """
+    Whether a content unit with this id and version already stores a different file.
+
+    A unit is identified by package id and version alone, so such a file could never
+    replace the stored one: creating the content would silently keep the old file.
+    """
+    existing = model.objects.filter(
+        package_id_lower=package_id_lower,
+        version_normalized=version_normalized,
+        _pulp_domain=get_domain_pk(),
+    )
+    return (
+        ContentArtifact.objects.filter(content__in=existing, artifact__isnull=False)
+        .exclude(artifact__sha256=sha256)
+        .exists()
+    )
 
 
 class NugetPackageContent(Content):
