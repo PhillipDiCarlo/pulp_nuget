@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from pulp_nuget.app import v3_api
+from pulp_nuget.app.tasks.synchronizing import _dependency_groups
 
 
 def _stub(version, **overrides):
@@ -102,3 +103,22 @@ def test_package_type_names():
     assert v3_api._package_type_names(_stub("1.0.0")) == ["Dependency"]
     stub = _stub("1.0.0", package_types=[{"name": "DotnetTool"}, {"name": "Custom"}])
     assert v3_api._package_type_names(stub) == ["DotnetTool", "Custom"]
+
+
+def test_synced_dependency_ranges_reach_the_registration():
+    """Sync stores dependency ranges under the key the registration builder reads."""
+    groups = _dependency_groups(
+        {
+            "dependencyGroups": [
+                {
+                    "targetFramework": "net8.0",
+                    "dependencies": [{"id": "Serilog", "range": "[4.0.0, )"}, {"id": "NoRange"}],
+                }
+            ]
+        }
+    )
+    assert groups[0]["dependencies"] == [{"id": "Serilog", "range": "[4.0.0, )"}, {"id": "NoRange"}]
+
+    entry = v3_api._catalog_entry(_stub("1.0.0", dependency_groups=groups), BASE)
+    ranges = [dep["range"] for dep in entry["dependencyGroups"][0]["dependencies"]]
+    assert ranges == ["[4.0.0, )", "(, )"]
