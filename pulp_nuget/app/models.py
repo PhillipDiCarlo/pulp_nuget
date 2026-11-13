@@ -11,8 +11,10 @@ from pulpcore.plugin.models import (
     Content,
     ContentGuard,
     Distribution,
+    ProgressReport,
     Remote,
     Repository,
+    Task,
 )
 from pulpcore.plugin.util import get_domain_pk
 
@@ -25,19 +27,21 @@ def retention_surplus(rows, retain):
     """
     The pks of content exceeding a package retention limit.
 
-    rows is an iterable of (pk, package_id_lower, version_normalized) tuples; for each
-    package id, every row beyond the ``retain`` highest versions (by NuGet/SemVer2
-    precedence, so prereleases rank just below their release) is surplus.
+    rows is an iterable of (pk, package_id_lower, version_normalized) tuples of packages
+    and symbol packages alike. For each package id, the ``retain`` highest versions (by
+    NuGet/SemVer2 precedence, so prereleases rank just below their release) are kept and
+    every row of another version is surplus — a symbol package goes with its package.
     """
     by_id = {}
     for pk, package_id_lower, version in rows:
-        by_id.setdefault(package_id_lower, []).append((pk, version))
+        by_id.setdefault(package_id_lower, {}).setdefault(version, []).append(pk)
     surplus = []
     for versions in by_id.values():
         if len(versions) <= retain:
             continue
-        versions.sort(key=lambda item: version_sort_key(item[1]), reverse=True)
-        surplus.extend(pk for pk, _version in versions[retain:])
+        ranked = sorted(versions, key=version_sort_key, reverse=True)
+        for version in ranked[retain:]:
+            surplus.extend(versions[version])
     return surplus
 
 
@@ -185,13 +189,26 @@ class NugetRepository(Repository, AutoAddObjPermsMixin):
         """Apply the package retention policy to a repository version being created."""
         if not self.retain_package_versions:
             return
+        rows = []
         for content_model in self.CONTENT_TYPES:
-            rows = content_model.objects.filter(pk__in=new_version.content).values_list(
-                "pk", "package_id_lower", "version_normalized"
+            rows.extend(
+                content_model.objects.filter(pk__in=new_version.content).values_list(
+                    "pk", "package_id_lower", "version_normalized"
+                )
             )
-            surplus_pks = retention_surplus(rows, self.retain_package_versions)
-            if surplus_pks:
-                new_version.remove_content(content_model.objects.filter(pk__in=surplus_pks))
+        surplus_pks = retention_surplus(rows, self.retain_package_versions)
+        if not surplus_pks:
+            return
+        new_version.remove_content(Content.objects.filter(pk__in=surplus_pks))
+        # Content that was just added can be among the trimmed (an older version than
+        # the retained ones), so say what happened instead of dropping it silently.
+        if Task.current():
+            with ProgressReport(
+                message="Removing versions beyond retain_package_versions",
+                code="retention.trimmed",
+                total=len(surplus_pks),
+            ) as progress:
+                progress.done = len(surplus_pks)
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"

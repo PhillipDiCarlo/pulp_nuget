@@ -16,6 +16,7 @@ def test_retention_on_upload(
     gen_object_with_cleanup,
     nupkg_factory,
     package_upload_factory,
+    monitor_task,
 ):
     """Each new repository version keeps only the newest N versions of a package id."""
     repo = gen_object_with_cleanup(
@@ -32,9 +33,16 @@ def test_retention_on_upload(
     package_upload_factory(nupkg_factory(package_id, "2.0.0"), repository=repo.pulp_href)
     assert _repo_versions(nuget_bindings, repo) == {"1.1.0", "2.0.0"}
 
-    # An older version than the retained ones is dropped again immediately.
-    package_upload_factory(nupkg_factory(package_id, "0.9.0"), repository=repo.pulp_href)
+    # An older version than the retained ones is dropped again immediately, and the
+    # task says so.
+    task = monitor_task(
+        nuget_bindings.ContentPackagesApi.create(
+            file=nupkg_factory(package_id, "0.9.0"), repository=repo.pulp_href
+        ).task
+    )
     assert _repo_versions(nuget_bindings, repo) == {"1.1.0", "2.0.0"}
+    reports = {report.code: report for report in task.progress_reports}
+    assert reports["retention.trimmed"].done == 1
 
 
 def test_retention_applies_to_symbol_packages(
@@ -88,3 +96,38 @@ def test_retention_on_sync(
     task = sync(repo, remote)
     assert "sync.was_skipped" not in {report.code for report in task.progress_reports}
     assert _repo_versions(nuget_bindings, repo) == {"1.0.1", "1.0.2", "1.0.3"}
+
+
+def test_retention_trims_symbol_packages_with_their_package(
+    nuget_bindings,
+    gen_object_with_cleanup,
+    nupkg_factory,
+    snupkg_factory,
+    portable_pdb_factory,
+    package_upload_factory,
+    monitor_task,
+):
+    """The symbol package of a trimmed package version is trimmed with it."""
+    repo = gen_object_with_cleanup(
+        nuget_bindings.RepositoriesNugetApi,
+        {"name": str(uuid.uuid4()), "retain_package_versions": 2},
+    )
+    package_id = f"Pulp.Retention.{uuid.uuid4().hex[:8]}"
+    for version in ("1.0.0", "1.1.0"):
+        package_upload_factory(nupkg_factory(package_id, version), repository=repo.pulp_href)
+        pdb, _ = portable_pdb_factory()
+        path = snupkg_factory(package_id, version, [(f"lib/{package_id}.pdb", pdb)])
+        monitor_task(
+            nuget_bindings.ContentSymbolPackagesApi.create(
+                file=path, repository=repo.pulp_href
+            ).task
+        )
+
+    # A third package version, without symbols, pushes 1.0.0 and its symbols out.
+    package_upload_factory(nupkg_factory(package_id, "1.2.0"), repository=repo.pulp_href)
+    assert _repo_versions(nuget_bindings, repo) == {"1.1.0", "1.2.0"}
+    repository = nuget_bindings.RepositoriesNugetApi.read(repo.pulp_href)
+    symbol_packages = nuget_bindings.ContentSymbolPackagesApi.list(
+        repository_version=repository.latest_version_href
+    )
+    assert [package.version_normalized for package in symbol_packages.results] == ["1.1.0"]

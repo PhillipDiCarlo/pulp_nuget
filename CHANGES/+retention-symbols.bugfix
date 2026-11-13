@@ -1,0 +1,2 @@
+Fixed ``retain_package_versions`` trimming symbol packages independently of packages:
+the symbol package of a trimmed package version is now removed with it.
