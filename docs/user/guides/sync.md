@@ -48,10 +48,10 @@ repository version an exact mirror of the filtered selection, removing anything 
 
 ## Repeated syncs are cheap
 
-The sync is skipped entirely when nothing changed: the remote's configuration and
-the checksums of the upstream registration indexes are recorded on the repository
-(`last_sync_details`), and a resync with the same state short-circuits with a
-`sync.was_skipped` progress report. Pass `optimize=false` to force a full pass.
+The sync is skipped entirely when nothing changed: the remote's configuration, the
+repository's `retain_package_versions`, and the checksums of the upstream registration
+indexes are recorded on the repository (`last_sync_details`), and a resync with the
+same state short-circuits with a `sync.was_skipped` progress report. Pass `optimize=false` to force a full pass.
 
 Version-range filters also avoid downloading registration pages whose version window
 can't match — syncing `Serilog [4.0.0,)` fetches a couple of pages, not all ~600

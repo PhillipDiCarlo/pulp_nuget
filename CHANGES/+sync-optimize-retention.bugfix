@@ -1,0 +1,2 @@
+Fixed syncs being skipped after ``retain_package_versions`` changed: the sync
+optimization now takes the retention policy into account, so the next sync applies it.
