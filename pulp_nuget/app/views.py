@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from pulpcore.plugin.models import Artifact, ContentArtifact
+from pulpcore.plugin.models import Artifact
 from pulpcore.plugin.tasking import dispatch, general_create
 from pulpcore.plugin.util import get_domain, get_url, set_domain
 
@@ -21,6 +21,7 @@ from pulp_nuget.app.models import (
     NugetDistribution,
     NugetPackageContent,
     NugetSymbolPackageContent,
+    stored_file_differs,
 )
 from pulp_nuget.app.nuspec import (
     InvalidNupkgError,
@@ -75,15 +76,9 @@ def _conflicting_package(model, uploaded_file, sha256):
     except InvalidNupkgError:
         # The dispatched task reports invalid packages.
         return None
-    existing = model.objects.filter(
-        package_id_lower=metadata["package_id"].lower(),
-        version_normalized=metadata["version_normalized"],
-        _pulp_domain=get_domain(),
-    )
-    different_file = ContentArtifact.objects.filter(
-        content__in=existing, artifact__isnull=False
-    ).exclude(artifact__sha256=sha256)
-    if different_file.exists():
+    if stored_file_differs(
+        model, metadata["package_id"].lower(), metadata["version_normalized"], sha256
+    ):
         return f"{metadata['package_id']} {metadata['version']}"
     return None
 

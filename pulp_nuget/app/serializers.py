@@ -13,6 +13,19 @@ from .nuspec import InvalidNupkgError, InvalidVersionRangeError, parse_nupkg, pa
 from .symbols import parse_snupkg
 
 
+def _reject_conflicting_file(model, data):
+    """Fail the upload when a different file is already stored for its id and version."""
+    if models.stored_file_differs(
+        model, data["package_id_lower"], data["version_normalized"], data["artifact"].sha256
+    ):
+        raise serializers.ValidationError(
+            _(
+                "A different file is already stored for {} {}; a published package version "
+                "cannot be replaced."
+            ).format(data["package_id"], data["version"])
+        )
+
+
 class NugetPackageSerializer(
     platform.SingleArtifactContentUploadSerializer, platform.ContentChecksumSerializer
 ):
@@ -72,6 +85,7 @@ class NugetPackageSerializer(
 
         metadata["package_id_lower"] = metadata["package_id"].lower()
         data.update(metadata)
+        _reject_conflicting_file(models.NugetPackageContent, data)
         return data
 
     def retrieve(self, validated_data):
@@ -168,6 +182,7 @@ class NugetSymbolPackageSerializer(
 
         metadata["package_id_lower"] = metadata["package_id"].lower()
         data.update(metadata)
+        _reject_conflicting_file(models.NugetSymbolPackageContent, data)
         return data
 
     def retrieve(self, validated_data):

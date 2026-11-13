@@ -171,8 +171,13 @@ def test_embedded_icon_and_readme(
 ):
     """Embedded icon/readme are served from the flatcontainer and drive iconUrl."""
     png = b"\x89PNG\r\n\x1a\n" + b"fakepixels"
+    # Unique ids: content units outlive the test and a different file for a stored id
+    # and version is rejected.
+    suffix = uuid.uuid4().hex[:8]
+    asset_id = f"asset.pkg.{suffix}"
+    plain_id = f"plain.pkg.{suffix}"
     path = nupkg_factory(
-        "asset.pkg",
+        asset_id,
         "1.0.0",
         icon=("images/icon.png", png),
         readme=("docs/README.md", b"# Asset Package"),
@@ -183,34 +188,34 @@ def test_embedded_icon_and_readme(
     distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
 
     response = requests.get(
-        distribution_url_factory(distribution, "v3-flatcontainer/asset.pkg/1.0.0/icon")
+        distribution_url_factory(distribution, f"v3-flatcontainer/{asset_id}/1.0.0/icon")
     )
     response.raise_for_status()
     assert response.headers["Content-Type"].startswith("image/png")
     assert response.content == png
 
     response = requests.get(
-        distribution_url_factory(distribution, "v3-flatcontainer/asset.pkg/1.0.0/readme")
+        distribution_url_factory(distribution, f"v3-flatcontainer/{asset_id}/1.0.0/readme")
     )
     response.raise_for_status()
     assert response.headers["Content-Type"].startswith("text/markdown")
     assert response.content == b"# Asset Package"
 
     # Search and registrations point iconUrl at our endpoint for embedded icons.
-    icon_url = distribution_url_factory(distribution, "v3-flatcontainer/asset.pkg/1.0.0/icon")
+    icon_url = distribution_url_factory(distribution, f"v3-flatcontainer/{asset_id}/1.0.0/icon")
     response = requests.get(distribution_url_factory(distribution, "v3/search"))
     assert response.json()["data"][0]["iconUrl"] == icon_url
     response = requests.get(
-        distribution_url_factory(distribution, "v3/registrations/asset.pkg/1.0.0.json")
+        distribution_url_factory(distribution, f"v3/registrations/{asset_id}/1.0.0.json")
     )
     assert response.json()["catalogEntry"]["iconUrl"] == icon_url
 
     # A package without embedded assets 404s on both endpoints.
-    plain = nupkg_factory("plain.pkg", "1.0.0")
+    plain = nupkg_factory(plain_id, "1.0.0")
     package_upload_factory(plain, repository=nuget_repo.pulp_href)
     for asset in ("icon", "readme"):
         response = requests.get(
-            distribution_url_factory(distribution, f"v3-flatcontainer/plain.pkg/1.0.0/{asset}")
+            distribution_url_factory(distribution, f"v3-flatcontainer/{plain_id}/1.0.0/{asset}")
         )
         assert response.status_code == 404, asset
 
@@ -417,10 +422,14 @@ def test_search_package_type_and_semver_level(
     distribution_url_factory,
 ):
     """Search honors the packageType and semVerLevel query parameters."""
+    # Unique ids: content units outlive the test and a different file for a stored id
+    # and version is rejected.
+    suffix = uuid.uuid4().hex[:8]
+    tool, lib, semver2 = (f"Pulp.Test.{name}.{suffix}" for name in ("Tool", "Lib", "Semver2"))
     for package_id, version, package_type in (
-        ("Pulp.Test.Tool", "1.0.0", "DotnetTool"),
-        ("Pulp.Test.Lib", "1.0.0", None),
-        ("Pulp.Test.Semver2", "1.0.0-beta.1", None),
+        (tool, "1.0.0", "DotnetTool"),
+        (lib, "1.0.0", None),
+        (semver2, "1.0.0-beta.1", None),
     ):
         package_upload_factory(
             nupkg_factory(package_id, version, package_type), repository=nuget_repo.pulp_href
@@ -433,18 +442,14 @@ def test_search_package_type_and_semver_level(
         response.raise_for_status()
         return {entry["id"] for entry in response.json()["data"]}
 
-    assert ids() == {"Pulp.Test.Tool", "Pulp.Test.Lib"}
-    assert ids(packageType="DotnetTool") == {"Pulp.Test.Tool"}
+    assert ids() == {tool, lib}
+    assert ids(packageType="DotnetTool") == {tool}
     # Matching is case-insensitive; no declared type means the implicit Dependency type.
-    assert ids(packageType="dependency") == {"Pulp.Test.Lib"}
+    assert ids(packageType="dependency") == {lib}
     assert ids(packageType="NoSuchType") == set()
     # A dotted prerelease label is SemVer2: hidden unless semVerLevel=2.0.0.
-    assert ids(prerelease="true") == {"Pulp.Test.Tool", "Pulp.Test.Lib"}
-    assert ids(prerelease="true", semVerLevel="2.0.0") == {
-        "Pulp.Test.Tool",
-        "Pulp.Test.Lib",
-        "Pulp.Test.Semver2",
-    }
+    assert ids(prerelease="true") == {tool, lib}
+    assert ids(prerelease="true", semVerLevel="2.0.0") == {tool, lib, semver2}
 
     response = requests.get(search_url, params={"packageType": "DotnetTool"})
     assert response.json()["data"][0]["packageTypes"] == [{"name": "DotnetTool"}]
@@ -546,3 +551,26 @@ def test_push_conflicting_package_is_rejected(
         f"v3-flatcontainer/{package_id.lower()}/1.0.0/{package_id.lower()}.1.0.0.nupkg",
     )
     assert requests.get(nupkg_url).content == original
+
+
+def test_upload_conflicting_package_fails(
+    nuget_bindings, pulpcore_bindings, nupkg_factory, package_upload_factory, monitor_task
+):
+    """Uploading a different file for an existing id and version fails instead of being dropped."""
+    # Unique id: content units outlive the test and are deduplicated by id and version.
+    package_id = f"Pulp.Upload.{uuid.uuid4().hex[:8]}"
+    path = nupkg_factory(package_id, "1.0.0")
+    package = package_upload_factory(path)
+
+    # The identical file again returns the existing unit.
+    assert package_upload_factory(path).pulp_href == package.pulp_href
+
+    # nupkg_factory rewrites the same path with different content.
+    changed = nupkg_factory(package_id, "1.0.0", readme=("README.md", b"changed"))
+    task_href = nuget_bindings.ContentPackagesApi.create(file=changed).task
+    with pytest.raises(Exception):
+        monitor_task(task_href)
+    task = pulpcore_bindings.TasksApi.read(task_href)
+    assert task.state == "failed"
+    assert "different file" in task.error["description"]
+    assert nuget_bindings.ContentPackagesApi.read(package.pulp_href).sha256 == package.sha256

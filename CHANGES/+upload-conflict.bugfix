@@ -1,0 +1,3 @@
+Uploading a different file for a package id and version that is already stored now
+fails with a validation error. The upload used to succeed and return the stored
+package, silently discarding the new file.
