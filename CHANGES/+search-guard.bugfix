@@ -1,0 +1,3 @@
+Fixed the search endpoint ignoring the distribution's content guard: ``v3/search`` on a
+guarded distribution answered anonymous requests while every other route required
+authentication. Search now applies the guard like the rest of the feed.

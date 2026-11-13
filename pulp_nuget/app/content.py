@@ -24,7 +24,18 @@ def _int_param(request, name, default):
         return default
 
 
-def _search_blocking(path, query, skip, take, prerelease, package_type, sem_ver_level):
+def _permit(request, distribution):
+    """Apply the distribution's content guard, as pulpcore does for content_handler routes."""
+    guard = distribution.content_guard
+    if guard is None:
+        return
+    try:
+        guard.cast().permit(request)
+    except PermissionError as exc:
+        raise web.HTTPForbidden(reason=str(exc))
+
+
+def _search_blocking(request, path, query, skip, take, prerelease, package_type, sem_ver_level):
     kwargs = {"base_path": path}
     if settings.DOMAIN_ENABLED:
         domain_name, _, base_path = path.partition("/")
@@ -33,6 +44,8 @@ def _search_blocking(path, query, skip, take, prerelease, package_type, sem_ver_
         distribution = NugetDistribution.objects.get(**kwargs)
     except NugetDistribution.DoesNotExist:
         return None
+    # This route bypasses pulpcore's handler, so the guard has to be checked here.
+    _permit(request, distribution)
     return v3_api.search(
         distribution,
         query=query,
@@ -47,6 +60,7 @@ def _search_blocking(path, query, skip, take, prerelease, package_type, sem_ver_
 async def search(request):
     """Serve <distribution base url>/v3/search."""
     data = await sync_to_async(_search_blocking)(
+        request,
         request.match_info["path"],
         request.query.get("q", ""),
         _int_param(request, "skip", 0),
