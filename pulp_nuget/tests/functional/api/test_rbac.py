@@ -130,20 +130,24 @@ def test_nuget_content_guard_basic_challenge(
     nupkg_url = distribution_url_factory(
         distribution, "v3-flatcontainer/newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg"
     )
+    search_url = distribution_url_factory(distribution, "v3/search")
 
     # Anonymous requests get the Basic challenge NuGet clients require to send credentials.
-    response = anon_session.get(index_url)
-    assert response.status_code == 401
-    assert response.headers.get("WWW-Authenticate", "").startswith("Basic")
+    # Search is a separate content-app route and must be guarded like the rest.
+    for url in (index_url, search_url):
+        response = anon_session.get(url)
+        assert response.status_code == 401, url
+        assert response.headers.get("WWW-Authenticate", "").startswith("Basic")
 
     # Authenticated users without the download permission are refused.
     outsider = gen_user()
-    response = requests.get(index_url, auth=(outsider.username, outsider.password))
-    assert response.status_code == 403
+    for url in (index_url, search_url):
+        response = requests.get(url, auth=(outsider.username, outsider.password))
+        assert response.status_code == 403, url
 
     # The object-level downloader role unlocks the whole feed.
     reader = gen_user(object_roles=[("nuget.nugetcontentguard_downloader", guard.pulp_href)])
-    for url in (index_url, nupkg_url):
+    for url in (index_url, nupkg_url, search_url):
         response = requests.get(url, auth=(reader.username, reader.password))
         assert response.status_code == 200, url
 
@@ -171,6 +175,7 @@ def test_rbac_content_guard(
     nupkg_url = distribution_url_factory(
         distribution, "v3-flatcontainer/newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg"
     )
+    search_url = distribution_url_factory(distribution, "v3/search")
 
     reader = gen_user()
     outsider = gen_user()
@@ -179,9 +184,11 @@ def test_rbac_content_guard(
         {"users": [reader.username], "role": "core.rbaccontentguard_downloader"},
     )
 
-    assert anon_session.get(index_url).status_code == 403
-    assert requests.get(index_url, auth=(outsider.username, outsider.password)).status_code == 403
-    for url in (index_url, nupkg_url):
+    for url in (index_url, search_url):
+        assert anon_session.get(url).status_code == 403, url
+        outsider_auth = (outsider.username, outsider.password)
+        assert requests.get(url, auth=outsider_auth).status_code == 403, url
+    for url in (index_url, nupkg_url, search_url):
         response = requests.get(url, auth=(reader.username, reader.password))
         assert response.status_code == 200, url
     # Admin passes any guard.

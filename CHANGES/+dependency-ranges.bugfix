@@ -1,0 +1,4 @@
+Fixed synced packages losing their dependency version ranges: registrations served
+every dependency of a mirrored package as accepting any version. Sync now stores the
+ranges where the registration builder reads them, and a migration repairs packages
+that were synced before.

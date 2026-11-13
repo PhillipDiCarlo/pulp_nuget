@@ -268,21 +268,18 @@ def _dependency_groups(entry):
     """
     Convert a catalogEntry's dependencyGroups to the model's nuspec-shaped structure.
 
-    Registration dependency entries use "id"/"range"; the model stores what parse_nuspec
-    produces from a manifest: {"targetFramework", "dependencies": [{"id", "version", ...}]}.
+    The model stores what parse_nuspec produces from a manifest:
+    {"targetFramework", "dependencies": [{"id", "range", ...}]}, optional keys omitted.
     """
     groups = []
     for group in entry.get("dependencyGroups", []):
         dependencies = []
         for dependency in group.get("dependencies", []):
-            dependencies.append(
-                {
-                    "id": dependency.get("id", ""),
-                    "version": dependency.get("range") or "",
-                    "include": dependency.get("include") or "",
-                    "exclude": dependency.get("exclude") or "",
-                }
-            )
+            item = {"id": dependency.get("id", "")}
+            for key in ("range", "include", "exclude"):
+                if dependency.get(key):
+                    item[key] = dependency[key]
+            dependencies.append(item)
         groups.append(
             {
                 "targetFramework": group.get("targetFramework") or "",
