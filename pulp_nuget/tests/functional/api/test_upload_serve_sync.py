@@ -574,3 +574,51 @@ def test_upload_conflicting_package_fails(
     assert task.state == "failed"
     assert "different file" in task.error["description"]
     assert nuget_bindings.ContentPackagesApi.read(package.pulp_href).sha256 == package.sha256
+
+
+def test_sync_does_not_replace_a_stored_package(
+    nuget_bindings,
+    pulpcore_bindings,
+    nuget_repo,
+    nupkg_factory,
+    package_upload_factory,
+    remote_factory,
+    local_feed,
+    sync,
+    monitor_task,
+):
+    """An immediate sync fails rather than replace the file stored for an id and version."""
+    add_package, feed = local_feed
+    # Unique id: content units outlive the test and are deduplicated by id and version.
+    package_id = f"Pulp.Sync.{uuid.uuid4().hex[:8]}"
+    path = nupkg_factory(package_id, "1.0.0")
+    with open(path, "rb") as fp:
+        original = fp.read()
+    stored = package_upload_factory(path)
+    with open(nupkg_factory(package_id, "1.0.0", readme=("README.md", b"changed")), "rb") as fp:
+        changed = fp.read()
+    remote = remote_factory(
+        url=str(feed.make_url("/v3/index.json")), includes=[package_id], policy="immediate"
+    )
+
+    # The feed serves a different file for the stored id and version.
+    add_package(package_id, "1.0.0", changed)
+    task_href = nuget_bindings.RepositoriesNugetApi.sync(
+        nuget_repo.pulp_href, {"remote": remote.pulp_href}
+    ).task
+    with pytest.raises(Exception):
+        monitor_task(task_href)
+    task = pulpcore_bindings.TasksApi.read(task_href)
+    assert task.state == "failed"
+    assert "different file" in task.error["description"]
+    assert package_id.lower() in task.error["description"]
+    assert nuget_bindings.ContentPackagesApi.read(stored.pulp_href).sha256 == stored.sha256
+
+    # The same file syncs fine and reuses the stored unit.
+    add_package(package_id, "1.0.0", original)
+    sync(nuget_repo, remote)
+    repository = nuget_bindings.RepositoriesNugetApi.read(nuget_repo.pulp_href)
+    packages = nuget_bindings.ContentPackagesApi.list(
+        repository_version=repository.latest_version_href
+    )
+    assert [package.pulp_href for package in packages.results] == [stored.pulp_href]

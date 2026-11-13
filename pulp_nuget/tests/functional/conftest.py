@@ -5,6 +5,7 @@ import zipfile
 
 import pytest
 import requests
+from aiohttp import web
 
 from pulpcore.tests.functional.utils import BindingsNamespace
 
@@ -215,3 +216,60 @@ def newtonsoft_package_factory(nuget_bindings, monitor_task):
         return nuget_bindings.ContentPackagesApi.read(package_href)
 
     return _newtonsoft_package_factory
+
+
+@pytest.fixture
+def local_feed(gen_threaded_aiohttp_server):
+    """
+    Serve a minimal NuGet v3 feed from the test process.
+
+    Returns a function registering a package file (id, version, bytes) on the feed, and
+    the server (``make_url("/v3/index.json")`` is the service index).
+    """
+    packages = {}
+
+    async def service_index(request):
+        return web.json_response(
+            {
+                "version": "3.0.0",
+                "resources": [
+                    {
+                        "@id": server.make_url("/registrations/"),
+                        "@type": "RegistrationsBaseUrl/3.6.0",
+                    }
+                ],
+            }
+        )
+
+    async def registration(request):
+        package_id = request.match_info["package_id"]
+        if package_id not in packages:
+            raise web.HTTPNotFound()
+        version, _data = packages[package_id]
+        leaf = {
+            "catalogEntry": {"id": package_id, "version": version},
+            "packageContent": server.make_url(f"/packages/{package_id}.nupkg"),
+        }
+        page = {"lower": version, "upper": version, "items": [leaf]}
+        return web.json_response({"count": 1, "items": [page]})
+
+    async def package(request):
+        package_id = request.match_info["package_id"]
+        if package_id not in packages:
+            raise web.HTTPNotFound()
+        return web.Response(body=packages[package_id][1])
+
+    app = web.Application()
+    app.add_routes(
+        [
+            web.get("/v3/index.json", service_index),
+            web.get("/registrations/{package_id}/index.json", registration),
+            web.get("/packages/{package_id}.nupkg", package),
+        ]
+    )
+    server = gen_threaded_aiohttp_server(app, None, [])
+
+    def _add_package(package_id, version, data):
+        packages[package_id.lower()] = (version, data)
+
+    return _add_package, server
