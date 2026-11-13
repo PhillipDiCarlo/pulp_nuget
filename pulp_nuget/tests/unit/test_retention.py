@@ -29,3 +29,19 @@ def test_retention_with_room_to_spare():
     assert retention_surplus(rows, 2) == []
     assert retention_surplus(rows, 5) == []
     assert retention_surplus([], 1) == []
+
+
+def test_retention_ranks_versions_across_content_types():
+    """A package and its symbol package share one ranking, so they are trimmed together."""
+    rows = [
+        # packages
+        (1, "pkg", "1.0.0"),
+        (2, "pkg", "1.1.0"),
+        (3, "pkg", "1.2.0"),
+        # symbol packages (none for 1.2.0)
+        (11, "pkg", "1.0.0"),
+        (12, "pkg", "1.1.0"),
+    ]
+    assert sorted(retention_surplus(rows, 2)) == [1, 11]
+    assert sorted(retention_surplus(rows, 1)) == [1, 2, 11, 12]
+    assert retention_surplus(rows, 3) == []

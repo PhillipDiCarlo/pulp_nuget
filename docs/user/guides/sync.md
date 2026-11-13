@@ -73,6 +73,11 @@ http --auth admin:password PATCH :5001<repo_href> retain_package_versions:=3
 Every new repository version then keeps only the newest N versions per package id
 (by NuGet precedence — a prerelease ranks just below its release) and drops the
 rest, no matter how the content arrived: sync, `dotnet nuget push`, upload, or
-modify. Symbol packages are trimmed by the same rule. The default `0` keeps
-everything. Changing the setting does not rewrite existing repository versions; it
-applies from the next content change onward.
+modify. A symbol package is kept or dropped together with its package version. The
+default `0` keeps everything. Changing the setting does not rewrite existing repository
+versions; it applies from the next content change onward.
+
+Whenever a new repository version drops content this way, its task carries a
+`retention.trimmed` progress report with the number of units removed. That includes a
+version you just added, if it is older than the retained ones: the task succeeds, but
+the version does not appear in the repository.
