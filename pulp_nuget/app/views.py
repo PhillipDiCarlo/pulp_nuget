@@ -12,13 +12,22 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from pulpcore.plugin.models import Artifact
+from pulpcore.plugin.models import Artifact, ContentArtifact
 from pulpcore.plugin.tasking import dispatch, general_create
 from pulpcore.plugin.util import get_domain, get_url, set_domain
 
 from pulp_nuget.app import v3_api
-from pulp_nuget.app.models import NugetDistribution
-from pulp_nuget.app.nuspec import InvalidNuspecError, canonical_version
+from pulp_nuget.app.models import (
+    NugetDistribution,
+    NugetPackageContent,
+    NugetSymbolPackageContent,
+)
+from pulp_nuget.app.nuspec import (
+    InvalidNupkgError,
+    InvalidNuspecError,
+    canonical_version,
+    parse_nupkg,
+)
 
 
 def _get_distribution(base_path):
@@ -53,7 +62,33 @@ def _check_publish_permission(user, distribution):
     )
 
 
-def _dispatch_push(request, base_path, serializer_name):
+def _conflicting_package(model, uploaded_file, sha256):
+    """
+    The "<id> <version>" of the pushed file if a different file is already stored for it.
+
+    A content unit is identified by package id and version alone, so the pushed file
+    could never replace the stored one; the task would succeed and keep the old file.
+    """
+    try:
+        uploaded_file.seek(0)
+        metadata = parse_nupkg(uploaded_file)
+    except InvalidNupkgError:
+        # The dispatched task reports invalid packages.
+        return None
+    existing = model.objects.filter(
+        package_id_lower=metadata["package_id"].lower(),
+        version_normalized=metadata["version_normalized"],
+        _pulp_domain=get_domain(),
+    )
+    different_file = ContentArtifact.objects.filter(
+        content__in=existing, artifact__isnull=False
+    ).exclude(artifact__sha256=sha256)
+    if different_file.exists():
+        return f"{metadata['package_id']} {metadata['version']}"
+    return None
+
+
+def _dispatch_push(request, base_path, serializer_name, model):
     """Receive a pushed package file and dispatch a task adding it to the repository."""
     # NuGet clients PUT the advertised URL with a trailing slash appended.
     base_path = base_path.strip("/")
@@ -72,6 +107,18 @@ def _dispatch_push(request, base_path, serializer_name):
         raise ValidationError(_("Exactly one package file must be provided."))
 
     artifact = Artifact.init_and_validate(files[0])
+    conflict = _conflicting_package(model, files[0], artifact.sha256)
+    if conflict:
+        # 409 is what NuGet clients expect here (and what --skip-duplicate tolerates).
+        return Response(
+            {
+                "detail": _(
+                    "A different file is already stored for {}; a published package "
+                    "version cannot be replaced."
+                ).format(conflict)
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
     try:
         existing = Artifact.objects.get(sha256=artifact.sha256, pulp_domain=get_domain())
         existing.touch()
@@ -120,7 +167,7 @@ class PackagePublishView(APIView):
     @extend_schema(exclude=True)
     def put(self, request, base_path):
         """Receive a pushed .nupkg and add it to the distribution's repository."""
-        return _dispatch_push(request, base_path, "NugetPackageSerializer")
+        return _dispatch_push(request, base_path, "NugetPackageSerializer", NugetPackageContent)
 
     def _find_package(self, request, base_path):
         """Resolve <base_path>/{id}/{version} to a package served by the distribution."""
@@ -189,4 +236,6 @@ class SymbolPackagePublishView(APIView):
     @extend_schema(exclude=True)
     def put(self, request, base_path):
         """Receive a pushed .snupkg and add it to the distribution's repository."""
-        return _dispatch_push(request, base_path, "NugetSymbolPackageSerializer")
+        return _dispatch_push(
+            request, base_path, "NugetSymbolPackageSerializer", NugetSymbolPackageContent
+        )

@@ -1,0 +1,3 @@
+Pushing a different file for a package id and version that is already stored now fails
+with ``409 Conflict``. It used to return ``202`` and silently keep the stored file.
+Pushing the identical file again is still accepted.

@@ -224,6 +224,11 @@ def synchronize(remote_pk, repository_pk, mirror, optimize=True, url=None):
         registration_indexes[package_id] = json.loads(data)
         registration_checksums[package_id] = sha256(data).hexdigest()
 
+    # An empty feed is a valid '*' selection, but an allowlist that matches nothing is
+    # a typo or a wrong url, and a mirror sync of nothing would empty the repository.
+    if not wildcard and all(index is None for index in registration_indexes.values()):
+        raise SyncError(_("None of the packages in 'includes' exist on the remote."))
+
     version = repository.latest_version()
     sync_details = {
         "remote_pk": str(remote.pk),

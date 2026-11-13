@@ -28,6 +28,11 @@ dotnet nuget push my.package.1.0.0.nupkg --source pulp --api-key unused
 The push is processed as a Pulp task: the package is uploaded, parsed, and added to
 the distribution's repository in a new repository version.
 
+A published package version cannot be replaced. Pushing a different file for a package
+id and version that Pulp already stores is rejected with `409 Conflict`, like on
+nuget.org; pass `--skip-duplicate` to have `dotnet nuget push` carry on past it. Pushing
+the identical file again is accepted and changes nothing.
+
 ## Symbol packages (.snupkg)
 
 The service index also advertises a `SymbolPackagePublish/4.9.0` resource, so symbol
