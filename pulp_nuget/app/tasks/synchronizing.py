@@ -424,6 +424,14 @@ class NugetFirstStage(Stage):
                 await progress.aincrement()
 
 
+def _packages(keys):
+    """The packages of this domain with the given (package_id_lower, version_normalized) keys."""
+    matches = Q()
+    for package_id_lower, version_normalized in keys:
+        matches |= Q(package_id_lower=package_id_lower, version_normalized=version_normalized)
+    return NugetPackageContent.objects.filter(matches, _pulp_domain=get_domain_pk())
+
+
 def group_acs_sources(content_keys, remote_artifacts):
     """
     Group alternate content source copies by package.
@@ -442,14 +450,11 @@ def group_acs_sources(content_keys, remote_artifacts):
 
 def _acs_sources(keys):
     """The alternate content source copies of (package_id_lower, version_normalized) keys."""
-    matches = Q()
-    for package_id_lower, version_normalized in keys:
-        matches |= Q(package_id_lower=package_id_lower, version_normalized=version_normalized)
     content_keys = {
         pk: (package_id_lower, version_normalized)
-        for pk, package_id_lower, version_normalized in NugetPackageContent.objects.filter(
-            matches, _pulp_domain=get_domain_pk()
-        ).values_list("pk", "package_id_lower", "version_normalized")
+        for pk, package_id_lower, version_normalized in _packages(keys).values_list(
+            "pk", "package_id_lower", "version_normalized"
+        )
     }
     if not content_keys:
         return {}
@@ -551,19 +556,62 @@ def stored_file_conflicts(downloads, stored):
 
 def _stored_files(keys):
     """The (key, sha256) pairs of the files stored for (id, version) keys."""
-    matches = Q()
-    for package_id_lower, version_normalized in keys:
-        matches |= Q(package_id_lower=package_id_lower, version_normalized=version_normalized)
     content_keys = {
         pk: (package_id_lower, version_normalized)
-        for pk, package_id_lower, version_normalized in NugetPackageContent.objects.filter(
-            matches, _pulp_domain=get_domain_pk()
-        ).values_list("pk", "package_id_lower", "version_normalized")
+        for pk, package_id_lower, version_normalized in _packages(keys).values_list(
+            "pk", "package_id_lower", "version_normalized"
+        )
     }
     rows = ContentArtifact.objects.filter(
         content__in=list(content_keys), artifact__isnull=False
     ).values_list("content", "artifact__sha256")
     return [(content_keys[content_pk], digest) for content_pk, digest in rows]
+
+
+def _uncompared_stored_files(remote, keys):
+    """The (id, version) keys with a stored file that the remote has no remote artifact for."""
+    packages = (
+        _packages(keys)
+        .filter(contentartifact__artifact__isnull=False)
+        .exclude(contentartifact__remoteartifact__remote=remote)
+    )
+    return set(packages.values_list("package_id_lower", "version_normalized"))
+
+
+class NugetStoredFileCheck(Stage):
+    """
+    Download deferred artifacts whose package already has a stored file.
+
+    An on_demand sync downloads nothing, so NugetStoredFileGuard would have nothing to
+    compare and clients would keep getting a stored file that differs from the remote's.
+    The first time a remote offers a stored package version, that one file is downloaded
+    after all; the remote artifact saved for it marks the comparison as done.
+    """
+
+    def __init__(self, remote):
+        super().__init__()
+        self.remote = remote
+
+    async def run(self):
+        async for batch in self.batches():
+            deferred = {}
+            for d_content in batch:
+                content = d_content.content
+                if not isinstance(content, NugetPackageContent):
+                    continue
+                for d_artifact in d_content.d_artifacts:
+                    if d_artifact.deferred_download:
+                        key = (content.package_id_lower, content.version_normalized)
+                        deferred.setdefault(key, []).append(d_artifact)
+            if deferred:
+                uncompared = await sync_to_async(_uncompared_stored_files)(
+                    self.remote, list(deferred)
+                )
+                for key in uncompared:
+                    for d_artifact in deferred[key]:
+                        d_artifact.deferred_download = False
+            for d_content in batch:
+                await self.put(d_content)
 
 
 class NugetStoredFileGuard(Stage):
@@ -573,8 +621,8 @@ class NugetStoredFileGuard(Stage):
     A content unit is identified by package id and version alone, and pulpcore's
     ContentSaver points an existing unit at a newly downloaded artifact. Left alone, a
     sync would replace the stored file of a published package version, in every
-    repository that holds it. Deferred (on_demand) artifacts are not downloaded during
-    a sync, so there is nothing to compare for them.
+    repository that holds it. NugetStoredFileCheck makes sure a deferred (on_demand)
+    artifact is downloaded when there is a stored file to compare it with.
     """
 
     async def run(self):
@@ -612,7 +660,8 @@ class NugetDeclarativeVersion(DeclarativeVersion):
 
     The acs flag enables NugetACSArtifactHandler (in place of pulpcore's checksum-based
     handler, which can never match NuGet artifacts) when the domain has a NuGet
-    alternate content source.
+    alternate content source. It is False for an alternate content source's own index
+    repository, whose refresh only records where files are and downloads none.
     """
 
     def __init__(self, first_stage, repository, mirror=False, acs=False):
@@ -626,9 +675,9 @@ class NugetDeclarativeVersion(DeclarativeVersion):
         )
         # Before the artifacts are saved and attached to existing content.
         pipeline.insert(downloader_index + 1, NugetStoredFileGuard())
-        if (
-            self.nuget_acs
-            and NugetAlternateContentSource.objects.filter(pulp_domain=get_domain_pk()).exists()
-        ):
-            pipeline.insert(downloader_index, NugetACSArtifactHandler())
+        if self.nuget_acs:
+            # After the ACS handler, so the comparison downloads the remote's own file.
+            pipeline.insert(downloader_index, NugetStoredFileCheck(self.first_stage.remote))
+            if NugetAlternateContentSource.objects.filter(pulp_domain=get_domain_pk()).exists():
+                pipeline.insert(downloader_index, NugetACSArtifactHandler())
         return pipeline

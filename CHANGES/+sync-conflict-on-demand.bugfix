@@ -1,0 +1,3 @@
+Fixed ``on_demand`` syncs not noticing that the remote serves a different file than the
+one stored for a package id and version. The first time a remote offers a stored version,
+the sync now downloads that file to compare it, and fails if it differs.
