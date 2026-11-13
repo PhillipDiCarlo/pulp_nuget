@@ -126,3 +126,15 @@ def test_download_without_alternate_sources_uses_the_remote():
     result = asyncio.run(_artifact(remote, []).download())
     assert result.path == "/tmp/remote"
     assert attempts == [("remote", "https://upstream/pkg.1.0.0.nupkg")]
+
+
+def test_stored_file_conflicts():
+    """Only a download whose digest differs from the stored file is a conflict."""
+    downloads = {("a", "1.0.0"): "aaa", ("b", "1.0.0"): "bbb", ("c", "1.0.0"): "ccc"}
+    stored = [
+        (("a", "1.0.0"), "aaa"),  # same file
+        (("b", "1.0.0"), "other"),  # different file
+        (("d", "1.0.0"), "ddd"),  # not part of this sync
+    ]
+    assert synchronizing.stored_file_conflicts(downloads, stored) == [("b", "1.0.0")]
+    assert synchronizing.stored_file_conflicts(downloads, []) == []

@@ -1,0 +1,3 @@
+Fixed ``immediate`` syncs replacing the file stored for a package id and version when
+the remote serves a different one, which changed the package in every repository that
+holds it. Such a sync now fails and names the package.

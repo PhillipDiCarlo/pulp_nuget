@@ -13,6 +13,7 @@ from pulpcore.plugin.exceptions import SyncError
 from pulpcore.plugin.models import (
     AlternateContentSourcePath,
     Artifact,
+    ContentArtifact,
     ProgressReport,
     Remote,
     RemoteArtifact,
@@ -537,6 +538,74 @@ class NugetACSArtifactHandler(Stage):
                 await self.put(d_content)
 
 
+def stored_file_conflicts(downloads, stored):
+    """
+    The packages whose downloaded file differs from the stored one, sorted.
+
+    downloads maps a (package_id_lower, version_normalized) key to the sha256 of the
+    file the sync downloaded; stored is an iterable of (key, sha256) pairs of the
+    files already stored for those keys.
+    """
+    return sorted({key for key, digest in stored if downloads.get(key) not in (None, digest)})
+
+
+def _stored_files(keys):
+    """The (key, sha256) pairs of the files stored for (id, version) keys."""
+    matches = Q()
+    for package_id_lower, version_normalized in keys:
+        matches |= Q(package_id_lower=package_id_lower, version_normalized=version_normalized)
+    content_keys = {
+        pk: (package_id_lower, version_normalized)
+        for pk, package_id_lower, version_normalized in NugetPackageContent.objects.filter(
+            matches, _pulp_domain=get_domain_pk()
+        ).values_list("pk", "package_id_lower", "version_normalized")
+    }
+    rows = ContentArtifact.objects.filter(
+        content__in=list(content_keys), artifact__isnull=False
+    ).values_list("content", "artifact__sha256")
+    return [(content_keys[content_pk], digest) for content_pk, digest in rows]
+
+
+class NugetStoredFileGuard(Stage):
+    """
+    Fail the sync when a download differs from the file already stored for its package.
+
+    A content unit is identified by package id and version alone, and pulpcore's
+    ContentSaver points an existing unit at a newly downloaded artifact. Left alone, a
+    sync would replace the stored file of a published package version, in every
+    repository that holds it. Deferred (on_demand) artifacts are not downloaded during
+    a sync, so there is nothing to compare for them.
+    """
+
+    async def run(self):
+        async for batch in self.batches():
+            downloads = {}
+            for d_content in batch:
+                content = d_content.content
+                if not isinstance(content, NugetPackageContent):
+                    continue
+                for d_artifact in d_content.d_artifacts:
+                    if d_artifact.artifact.sha256:
+                        key = (content.package_id_lower, content.version_normalized)
+                        downloads[key] = d_artifact.artifact.sha256
+            if downloads:
+                stored = await sync_to_async(_stored_files)(list(downloads))
+                conflicts = stored_file_conflicts(downloads, stored)
+                if conflicts:
+                    names = ", ".join(
+                        f"{package_id} {version}" for package_id, version in conflicts
+                    )
+                    raise SyncError(
+                        _(
+                            "The remote serves a different file than the one already stored "
+                            "for: {}. A published package version cannot be replaced; exclude "
+                            "it from the sync or remove the stored package first."
+                        ).format(names)
+                    )
+            for d_content in batch:
+                await self.put(d_content)
+
+
 class NugetDeclarativeVersion(DeclarativeVersion):
     """
     A DeclarativeVersion that downloads packages from NuGet alternate content sources.
@@ -552,14 +621,14 @@ class NugetDeclarativeVersion(DeclarativeVersion):
 
     def pipeline_stages(self, new_version):
         pipeline = super().pipeline_stages(new_version)
+        downloader_index = next(
+            index for index, stage in enumerate(pipeline) if isinstance(stage, ArtifactDownloader)
+        )
+        # Before the artifacts are saved and attached to existing content.
+        pipeline.insert(downloader_index + 1, NugetStoredFileGuard())
         if (
             self.nuget_acs
             and NugetAlternateContentSource.objects.filter(pulp_domain=get_domain_pk()).exists()
         ):
-            downloader_index = next(
-                index
-                for index, stage in enumerate(pipeline)
-                if isinstance(stage, ArtifactDownloader)
-            )
             pipeline.insert(downloader_index, NugetACSArtifactHandler())
         return pipeline

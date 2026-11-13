@@ -50,6 +50,13 @@ A package id in `includes` that the upstream does not have is skipped, with a wa
 in the Pulp worker log. If none of them exist, the sync fails instead, so a typo or a
 wrong `url` cannot turn a `mirror=true` sync into an empty repository.
 
+A published package version cannot be replaced. If the upstream serves a different file
+for a package id and version that Pulp already stores (uploaded, pushed, or synced from
+another feed), an `immediate` sync fails and names the package; add it to `excludes`, or
+remove the stored package from every repository and run orphan cleanup, then sync again.
+An `on_demand` sync downloads nothing, so it cannot notice the difference: clients keep
+getting the stored file.
+
 ## Repeated syncs are cheap
 
 The sync is skipped entirely when nothing changed: the remote's configuration, the
