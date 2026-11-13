@@ -66,7 +66,9 @@ def test_retention_applies_to_symbol_packages(
     assert [package.version_normalized for package in symbol_packages.results] == ["1.1.0"]
 
 
-def test_retention_on_sync(nuget_bindings, gen_object_with_cleanup, remote_factory, sync):
+def test_retention_on_sync(
+    nuget_bindings, gen_object_with_cleanup, remote_factory, sync, monitor_task
+):
     """A sync honors the repository's retention policy."""
     repo = gen_object_with_cleanup(
         nuget_bindings.RepositoriesNugetApi,
@@ -75,3 +77,14 @@ def test_retention_on_sync(nuget_bindings, gen_object_with_cleanup, remote_facto
     remote = remote_factory(includes=["Newtonsoft.Json.Bson [1.0.1, 1.0.3]"])
     sync(repo, remote)
     assert _repo_versions(nuget_bindings, repo) == {"1.0.2", "1.0.3"}
+
+    # Changing the policy invalidates the sync optimization: the next sync is not
+    # skipped and brings back the versions the old policy trimmed.
+    monitor_task(
+        nuget_bindings.RepositoriesNugetApi.partial_update(
+            repo.pulp_href, {"retain_package_versions": 3}
+        ).task
+    )
+    task = sync(repo, remote)
+    assert "sync.was_skipped" not in {report.code for report in task.progress_reports}
+    assert _repo_versions(nuget_bindings, repo) == {"1.0.1", "1.0.2", "1.0.3"}

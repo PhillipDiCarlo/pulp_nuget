@@ -136,6 +136,7 @@ def _should_optimize_sync(sync_details, last_sync_details, version):
         "mirror",
         "includes",
         "excludes",
+        "retain_package_versions",
         "most_recent_version",
         "registration_checksums",
     ):
@@ -231,6 +232,8 @@ def synchronize(remote_pk, repository_pk, mirror, optimize=True, url=None):
         "mirror": mirror,
         "includes": sorted(remote.includes),
         "excludes": sorted(remote.excludes),
+        # A changed retention policy only takes effect in a new repository version.
+        "retain_package_versions": repository.retain_package_versions,
         "most_recent_version": version.number,
         "registration_checksums": registration_checksums,
     }
