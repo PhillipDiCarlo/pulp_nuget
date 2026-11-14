@@ -18,7 +18,7 @@ permissions on, and object creators automatically become owners.
 | `nuget.nugetalternatecontentsource_creator` / `_owner` / `_viewer` | the same, for alternate content sources; owners can also refresh them |
 
 Roles can be granted globally, on a single object, or — with
-[domains](site:pulpcore/docs/admin/guides/domain-multi-tenancy/) enabled — on a domain:
+[domains](site:pulpcore/docs/user/guides/create-domains/) enabled — on a domain:
 
 ```bash
 # global
