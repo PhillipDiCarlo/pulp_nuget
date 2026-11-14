@@ -52,10 +52,14 @@ wrong `url` cannot turn a `mirror=true` sync into an empty repository.
 
 A published package version cannot be replaced. If the upstream serves a different file
 for a package id and version that Pulp already stores (uploaded, pushed, or synced from
-another feed), an `immediate` sync fails and names the package; add it to `excludes`, or
-remove the stored package from every repository and run orphan cleanup, then sync again.
-An `on_demand` sync downloads nothing, so it cannot notice the difference: clients keep
-getting the stored file.
+another feed), the sync fails and names the package; add it to `excludes`, or remove the
+stored package from every repository and run orphan cleanup, then sync again.
+
+An `on_demand` sync makes the same comparison, once: the first time a remote offers a
+version that Pulp already stores, the sync downloads that one file. Later syncs from that
+remote do not download it again, and versions with no stored file are not downloaded at
+all. So if two `on_demand` remotes offer different files for a version that is not stored
+yet, the one a client requests first is stored and served from then on.
 
 ## Repeated syncs are cheap
 

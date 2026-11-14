@@ -576,7 +576,9 @@ def test_upload_conflicting_package_fails(
     assert nuget_bindings.ContentPackagesApi.read(package.pulp_href).sha256 == package.sha256
 
 
+@pytest.mark.parametrize("policy", ["immediate", "on_demand"])
 def test_sync_does_not_replace_a_stored_package(
+    policy,
     nuget_bindings,
     pulpcore_bindings,
     nuget_repo,
@@ -587,7 +589,7 @@ def test_sync_does_not_replace_a_stored_package(
     sync,
     monitor_task,
 ):
-    """An immediate sync fails rather than replace the file stored for an id and version."""
+    """A sync fails when the remote's file differs from the one stored for an id and version."""
     add_package, feed = local_feed
     # Unique id: content units outlive the test and are deduplicated by id and version.
     package_id = f"Pulp.Sync.{uuid.uuid4().hex[:8]}"
@@ -598,7 +600,7 @@ def test_sync_does_not_replace_a_stored_package(
     with open(nupkg_factory(package_id, "1.0.0", readme=("README.md", b"changed")), "rb") as fp:
         changed = fp.read()
     remote = remote_factory(
-        url=str(feed.make_url("/v3/index.json")), includes=[package_id], policy="immediate"
+        url=str(feed.make_url("/v3/index.json")), includes=[package_id], policy=policy
     )
 
     # The feed serves a different file for the stored id and version.
@@ -622,3 +624,23 @@ def test_sync_does_not_replace_a_stored_package(
         repository_version=repository.latest_version_href
     )
     assert [package.pulp_href for package in packages.results] == [stored.pulp_href]
+
+
+def test_on_demand_sync_downloads_only_stored_packages(
+    nuget_bindings, nuget_repo, nupkg_factory, remote_factory, local_feed, sync
+):
+    """An on_demand sync does not download a package that has no stored file to compare."""
+    add_package, feed = local_feed
+    package_id = f"Pulp.Sync.{uuid.uuid4().hex[:8]}"
+    with open(nupkg_factory(package_id, "1.0.0"), "rb") as fp:
+        add_package(package_id, "1.0.0", fp.read())
+    remote = remote_factory(
+        url=str(feed.make_url("/v3/index.json")), includes=[package_id], policy="on_demand"
+    )
+
+    sync(nuget_repo, remote)
+    repository = nuget_bindings.RepositoriesNugetApi.read(nuget_repo.pulp_href)
+    packages = nuget_bindings.ContentPackagesApi.list(
+        repository_version=repository.latest_version_href
+    )
+    assert [package.artifact for package in packages.results] == [None]
