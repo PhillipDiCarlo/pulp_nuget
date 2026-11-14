@@ -45,10 +45,11 @@ def test_rbac_repository_crud(nuget_bindings, gen_user, gen_object_with_cleanup,
 
 
 def test_rbac_content_upload_requires_repository_perms(
-    nuget_bindings, nuget_repo, gen_user, newtonsoft_nupkg_path
+    nuget_bindings, nuget_repo, gen_user, newtonsoft_nupkg_path, monitor_task
 ):
     """Non-admin uploads must target a repository the user may modify."""
     nobody = gen_user()
+    modifier = gen_user(object_roles=[("nuget.nugetrepository_modifier", nuget_repo.pulp_href)])
 
     # No repository parameter: rejected for non-admins (pulpcore reports this as a 400).
     with nobody, pytest.raises(nuget_bindings.module.ApiException) as exc:
@@ -62,6 +63,14 @@ def test_rbac_content_upload_requires_repository_perms(
         )
     assert exc.value.status == 403
 
+    # The modifier role on the repository is enough.
+    with modifier:
+        monitor_task(
+            nuget_bindings.ContentPackagesApi.create(
+                file=newtonsoft_nupkg_path, repository=nuget_repo.pulp_href
+            ).task
+        )
+
 
 def test_rbac_push_permission(
     nuget_repo,
@@ -71,27 +80,37 @@ def test_rbac_push_permission(
     newtonsoft_nupkg_path,
     gen_user,
 ):
-    """Push, unlist, and relist require nuget.publish_nugetdistribution."""
+    """
+    Push, unlist, and relist require nuget.publish_nugetdistribution on the distribution
+    and nuget.modify_nugetrepository on its repository.
+    """
     newtonsoft_package_factory(repository=nuget_repo.pulp_href)
     distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
     publish_url = publish_url_factory(distribution)
     delete_url = f"{publish_url}/Newtonsoft.Json/13.0.3"
 
     nobody = gen_user()
-    publisher = gen_user(
+    publisher_only = gen_user(
         object_roles=[("nuget.nugetdistribution_publisher", distribution.pulp_href)]
     )
-    nobody_auth = (nobody.username, nobody.password)
+    publisher = gen_user(
+        object_roles=[
+            ("nuget.nugetdistribution_publisher", distribution.pulp_href),
+            ("nuget.nugetrepository_modifier", nuget_repo.pulp_href),
+        ]
+    )
     publisher_auth = (publisher.username, publisher.password)
 
-    # An authenticated user without the permission is rejected everywhere.
-    with open(newtonsoft_nupkg_path, "rb") as fp:
-        response = requests.put(publish_url + "/", files={"package": fp}, auth=nobody_auth)
-    assert response.status_code == 403
-    assert requests.delete(delete_url, auth=nobody_auth).status_code == 403
-    assert requests.post(delete_url, auth=nobody_auth).status_code == 403
+    # Without both permissions, an authenticated user is rejected everywhere.
+    for user in (nobody, publisher_only):
+        auth = (user.username, user.password)
+        with open(newtonsoft_nupkg_path, "rb") as fp:
+            response = requests.put(publish_url + "/", files={"package": fp}, auth=auth)
+        assert response.status_code == 403
+        assert requests.delete(delete_url, auth=auth).status_code == 403
+        assert requests.post(delete_url, auth=auth).status_code == 403
 
-    # The object-level publisher role allows the whole push surface...
+    # The publisher role plus modify on the repository allows the whole push surface...
     with open(newtonsoft_nupkg_path, "rb") as fp:
         response = requests.put(publish_url + "/", files={"package": fp}, auth=publisher_auth)
     assert response.status_code == 202, response.text
@@ -100,11 +119,31 @@ def test_rbac_push_permission(
     finally:
         assert requests.post(delete_url, auth=publisher_auth).status_code == 200
 
-    # ...but grants nothing else, e.g. repository creation stays denied.
+    # ...but only through that distribution.
     other = nuget_distribution_factory(repository=nuget_repo.pulp_href)
     other_url = publish_url_factory(other)
     with open(newtonsoft_nupkg_path, "rb") as fp:
         response = requests.put(other_url + "/", files={"package": fp}, auth=publisher_auth)
+    assert response.status_code == 403
+
+
+def test_rbac_distribution_owner_cannot_push_to_viewed_repository(
+    nuget_repo, nuget_distribution_factory, publish_url_factory, newtonsoft_nupkg_path, gen_user
+):
+    """Creating a distribution for a repository the user can only view grants no push."""
+    viewer = gen_user(
+        model_roles=["nuget.nugetdistribution_creator"],
+        object_roles=[("nuget.nugetrepository_viewer", nuget_repo.pulp_href)],
+    )
+    with viewer:
+        distribution = nuget_distribution_factory(repository=nuget_repo.pulp_href)
+
+    with open(newtonsoft_nupkg_path, "rb") as fp:
+        response = requests.put(
+            publish_url_factory(distribution) + "/",
+            files={"package": fp},
+            auth=(viewer.username, viewer.password),
+        )
     assert response.status_code == 403
 
 

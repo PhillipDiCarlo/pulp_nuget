@@ -21,7 +21,9 @@ nuget.org; search results and registrations point `iconUrl` at the icon endpoint
 Content is identified by the natural key *(lowercase package id, lowercase
 NuGet-normalized SemVer2 version)*, so re-uploading the same package deduplicates
 cleanly. A published version cannot be replaced: uploading a different file for an id
-and version that is already stored fails with a validation error.
+and version that is already stored fails with a validation error. The stored file is
+shared by every repository in the
+[domain](site:pulp_nuget/docs/admin/guides/rbac/#one-file-per-package-version-in-a-domain).
 
 ## Distribute it
 

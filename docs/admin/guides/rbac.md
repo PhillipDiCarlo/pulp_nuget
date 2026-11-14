@@ -9,9 +9,10 @@ permissions on, and object creators automatically become owners.
 | Role | Grants |
 |---|---|
 | `nuget.nugetrepository_creator` / `_owner` / `_viewer` | create / full control / read on repositories |
+| `nuget.nugetrepository_modifier` | read a repository and add or remove its content (upload, modify, and push together with the publisher role), without owning it |
 | `nuget.nugetremote_creator` / `_owner` / `_viewer` | the same, for remotes |
 | `nuget.nugetdistribution_creator` / `_owner` / `_viewer` | the same, for distributions |
-| `nuget.nugetdistribution_publisher` | push, unlist, and relist via the distribution's publish endpoint |
+| `nuget.nugetdistribution_publisher` | push, unlist, and relist via the distribution's publish endpoint; also needs `nuget.modify_nugetrepository` on its repository (the modifier role) |
 | `nuget.nugetcontentguard_creator` / `_owner` / `_viewer` | the same, for content guards |
 | `nuget.nugetcontentguard_downloader` | download through a guarded distribution |
 | `nuget.nugetalternatecontentsource_creator` / `_owner` / `_viewer` | the same, for alternate content sources; owners can also refresh them |
@@ -34,7 +35,40 @@ Uploading a package requires passing a `repository` the user is allowed to modif
 (`nuget.modify_nugetrepository` plus view). Content queryset scoping shows users only
 packages in repositories they can view.
 
+## Alternate content sources
+
+Grant `nuget.nugetalternatecontentsource_creator` as carefully as write access to every
+repository in the domain. An alternate content source applies to every sync in its
+domain, and NuGet feeds publish no checksums to verify a copy against, so the source
+supplies the file for any package version a sync stores for the first time. The same
+goes for permission to change an existing alternate content source or the remote it
+uses. See
+[How packages are matched](site:pulp_nuget/docs/user/guides/acs/#how-packages-are-matched).
+
 ## Domains
 
 All endpoints, including the push/unlist publish endpoint, are domain-aware and operate
 in the target distribution's domain.
+
+### One file per package version in a domain
+
+A package is identified by its id and version alone, so a domain stores a single file for
+each package version, shared by every repository in the domain that contains it. This
+follows NuGet's rule that a published version never changes, and it is what lets
+`on_demand` syncs and alternate content sources refer to a package before its file has
+been downloaded.
+
+Object permissions do not separate the following; only domains do:
+
+- Whoever stores a version first decides its file. A later upload, push, or sync of a
+  different file for that id and version fails and names the package, until the stored
+  package is removed from every repository and orphan cleanup has run.
+- That failure tells the user that the version exists in the domain, even when it is only
+  in repositories they cannot view.
+- Two repositories in one domain cannot hold different builds of the same id and version.
+- [Unlisting](site:pulp_nuget/docs/user/guides/unlist/) a version hides it from search in
+  every repository in the domain that contains it. A user needs the push permissions for
+  only one of those repositories to do so.
+
+Give teams that must not affect each other, or that need their own builds of the same
+package version, separate domains.

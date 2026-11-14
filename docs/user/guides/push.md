@@ -3,15 +3,20 @@
 Every repository-backed distribution advertises a `PackagePublish/2.0.0` resource, so
 `dotnet nuget push` works against it directly.
 
-## Grant the push permission
+## Grant the push permissions
 
-Pushing requires the `nuget.publish_nugetdistribution` permission on the distribution.
-Grant the built-in publisher role (object-scoped here — the user can push to this
-distribution only):
+Pushing requires two permissions: `nuget.publish_nugetdistribution` on the distribution
+and `nuget.modify_nugetrepository` on its repository. A push writes to the repository,
+so access to a distribution's push URL is not enough on its own.
+
+Grant the built-in publisher role on the distribution and the modifier role on the
+repository (both object-scoped here — the user can push through this distribution only):
 
 ```bash
 http --auth admin:password POST :5001<distribution_href>add_role/ \
     role=nuget.nugetdistribution_publisher users:='["alice"]'
+http --auth admin:password POST :5001<repo_href>add_role/ \
+    role=nuget.nugetrepository_modifier users:='["alice"]'
 ```
 
 ## Configure credentials and push
