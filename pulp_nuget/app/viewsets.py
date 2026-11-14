@@ -302,6 +302,12 @@ class NugetRepositoryViewSet(core.RepositoryViewSet, ModifyRepositoryActionMixin
             "nuget.repair_nugetrepository",
         ],
         "nuget.nugetrepository_viewer": ["nuget.view_nugetrepository"],
+        # Enough to upload to a repository or (with the distribution publisher role) push
+        # to it, without the owner's control over the repository itself.
+        "nuget.nugetrepository_modifier": [
+            "nuget.view_nugetrepository",
+            "nuget.modify_nugetrepository",
+        ],
     }
 
     @extend_schema(

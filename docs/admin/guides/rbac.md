@@ -9,9 +9,10 @@ permissions on, and object creators automatically become owners.
 | Role | Grants |
 |---|---|
 | `nuget.nugetrepository_creator` / `_owner` / `_viewer` | create / full control / read on repositories |
+| `nuget.nugetrepository_modifier` | read a repository and add or remove its content (upload, modify, and push together with the publisher role), without owning it |
 | `nuget.nugetremote_creator` / `_owner` / `_viewer` | the same, for remotes |
 | `nuget.nugetdistribution_creator` / `_owner` / `_viewer` | the same, for distributions |
-| `nuget.nugetdistribution_publisher` | push, unlist, and relist via the distribution's publish endpoint |
+| `nuget.nugetdistribution_publisher` | push, unlist, and relist via the distribution's publish endpoint; also needs `nuget.modify_nugetrepository` on its repository (the modifier role) |
 | `nuget.nugetcontentguard_creator` / `_owner` / `_viewer` | the same, for content guards |
 | `nuget.nugetcontentguard_downloader` | download through a guarded distribution |
 | `nuget.nugetalternatecontentsource_creator` / `_owner` / `_viewer` | the same, for alternate content sources; owners can also refresh them |

@@ -1,0 +1,4 @@
+Push, unlist, and relist now also require ``nuget.modify_nugetrepository`` on the
+distribution's repository. The distribution's publish permission alone was enough before,
+so a user who could view a repository and create a distribution for it could write to it.
+Users who only hold the publisher role must also be granted modify on the repository.

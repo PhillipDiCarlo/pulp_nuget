@@ -25,8 +25,8 @@ v3 feed (nuget.org or a private feed). v3 only — there is no v2/OData support.
 - **Push** packages with `dotnet nuget push`: each distribution advertises a
   `PackagePublish/2.0.0` resource that adds pushed packages to its repository.
   Pushing requires the `nuget.publish_nugetdistribution` permission (grant the
-  `nuget.nugetdistribution_publisher` role); configure source credentials in
-  `nuget.config`.
+  `nuget.nugetdistribution_publisher` role) and `nuget.modify_nugetrepository` on the
+  repository; configure source credentials in `nuget.config`.
 - **Unlist** packages with `dotnet nuget delete` (nuget.org semantics: hidden from
   search but still restorable by exact version); relist with a POST to the same URL.
 - **Symbol packages**: push `.snupkg` files via the `SymbolPackagePublish/4.9.0`

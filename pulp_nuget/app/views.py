@@ -49,18 +49,39 @@ def _get_distribution(base_path):
     return distribution
 
 
+def _has_perm(user, permission, obj):
+    """Whether the user holds a permission at the model, object, or domain level."""
+    if user.has_perm(permission) or user.has_perm(permission, obj=obj):
+        return True
+    return settings.DOMAIN_ENABLED and user.has_perm(permission, obj=obj.pulp_domain)
+
+
 def _check_publish_permission(user, distribution):
-    """Require nuget.publish_nugetdistribution at the model, domain, or object level."""
-    permission = "nuget.publish_nugetdistribution"
-    if user.has_perm(permission) or user.has_perm(permission, obj=distribution):
-        return
-    if settings.DOMAIN_ENABLED and user.has_perm(permission, obj=distribution.pulp_domain):
-        return
-    raise PermissionDenied(
-        _("You do not have permission to publish to the distribution at '{}'.").format(
-            distribution.base_path
+    """
+    Require nuget.publish_nugetdistribution on the distribution and
+    nuget.modify_nugetrepository on the repository it serves.
+
+    Publishing writes to the repository. A distribution can be created with only view
+    access to its repository and its creator owns it, so the distribution's permission
+    alone would let a viewer write.
+    """
+    if not _has_perm(user, "nuget.publish_nugetdistribution", distribution):
+        raise PermissionDenied(
+            _("You do not have permission to publish to the distribution at '{}'.").format(
+                distribution.base_path
+            )
         )
-    )
+    repository = distribution.repository
+    if repository is None and distribution.repository_version is not None:
+        repository = distribution.repository_version.repository
+    if repository is not None and not _has_perm(
+        user, "nuget.modify_nugetrepository", repository.cast()
+    ):
+        raise PermissionDenied(
+            _(
+                "You do not have permission to modify the repository of the distribution at '{}'."
+            ).format(distribution.base_path)
+        )
 
 
 def _conflicting_package(model, uploaded_file, sha256):
@@ -153,7 +174,8 @@ class PackagePublishView(APIView):
     Authentication is HTTP basic; the X-NuGet-ApiKey header is deliberately ignored
     (clients require --api-key, any value works — credentials belong in nuget.config).
     All three actions require the nuget.publish_nugetdistribution permission (model,
-    domain, or object level — e.g. via the nuget.nugetdistribution_publisher role).
+    domain, or object level — e.g. via the nuget.nugetdistribution_publisher role) and
+    nuget.modify_nugetrepository on the distribution's repository.
     """
 
     parser_classes = [MultiPartParser]
@@ -222,7 +244,7 @@ class SymbolPackagePublishView(APIView):
     dispatched task, mirroring the asynchronous 202 semantics of the package push.
 
     Authentication and permissions match PackagePublishView: HTTP basic plus the
-    nuget.publish_nugetdistribution permission.
+    nuget.publish_nugetdistribution and nuget.modify_nugetrepository permissions.
     """
 
     parser_classes = [MultiPartParser]

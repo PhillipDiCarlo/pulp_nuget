@@ -18,8 +18,9 @@ POST to the same publish URL:
 http --auth admin:password POST :5001/pulp_nuget/publish/<base_path>/My.Package/1.0.0
 ```
 
-Both operations require the `nuget.publish_nugetdistribution` permission on the
-distribution, like [pushing](push.md).
+Both operations require the same permissions as [pushing](push.md):
+`nuget.publish_nugetdistribution` on the distribution and `nuget.modify_nugetrepository`
+on its repository.
 
 !!! warning
 
