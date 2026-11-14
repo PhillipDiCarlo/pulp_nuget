@@ -1,0 +1,2 @@
+Documented that a domain stores one file per package id and version, what follows from
+that, and that domains are the boundary between teams.
