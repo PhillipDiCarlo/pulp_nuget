@@ -42,9 +42,11 @@ prereleases. A plain id with no range syncs everything, prereleases included.
 http --auth admin:password POST :5001<repo_href>sync/ remote=<remote_href>
 ```
 
-The sync honors the upstream's `listed` flags, so versions unlisted on the upstream
-stay hidden from search in your mirror too. Passing `mirror=true` makes the
-repository version an exact mirror of the filtered selection, removing anything else.
+A version takes the upstream's `listed` flag when Pulp first stores it, so versions
+already unlisted on the upstream stay hidden from search in your mirror too. A later
+unlist or relist on the upstream is not picked up; [unlist or relist](unlist.md) the
+version in Pulp instead. Passing `mirror=true` makes the repository version an exact
+mirror of the filtered selection, removing anything else.
 
 A package id in `includes` that the upstream does not have is skipped, with a warning
 in the Pulp worker log. If none of them exist, the sync fails instead, so a typo or a

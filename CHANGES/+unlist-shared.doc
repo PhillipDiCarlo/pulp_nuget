@@ -1,0 +1,3 @@
+Documented that unlisting a version applies to every repository in the domain that contains
+it, and corrected the sync guide: a version takes the upstream's ``listed`` flag only when it
+is first stored.

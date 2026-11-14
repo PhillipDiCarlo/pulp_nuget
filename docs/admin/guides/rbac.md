@@ -66,6 +66,9 @@ Object permissions do not separate the following; only domains do:
 - That failure tells the user that the version exists in the domain, even when it is only
   in repositories they cannot view.
 - Two repositories in one domain cannot hold different builds of the same id and version.
+- [Unlisting](site:pulp_nuget/docs/user/guides/unlist/) a version hides it from search in
+  every repository in the domain that contains it. A user needs the push permissions for
+  only one of those repositories to do so.
 
 Give teams that must not affect each other, or that need their own builds of the same
 package version, separate domains.

@@ -25,4 +25,6 @@ on its repository.
 !!! warning
 
     The `listed` flag lives on the content unit itself, so unlisting a version affects
-    every repository and distribution that serves that same package version.
+    every repository and distribution in the domain that serves that same package
+    version, including earlier repository versions. A sync does not change the flag of a
+    version that is already stored.
