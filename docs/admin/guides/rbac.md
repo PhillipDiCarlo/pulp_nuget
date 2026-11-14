@@ -35,6 +35,16 @@ Uploading a package requires passing a `repository` the user is allowed to modif
 (`nuget.modify_nugetrepository` plus view). Content queryset scoping shows users only
 packages in repositories they can view.
 
+## Alternate content sources
+
+Grant `nuget.nugetalternatecontentsource_creator` as carefully as write access to every
+repository in the domain. An alternate content source applies to every sync in its
+domain, and NuGet feeds publish no checksums to verify a copy against, so the source
+supplies the file for any package version a sync stores for the first time. The same
+goes for permission to change an existing alternate content source or the remote it
+uses. See
+[How packages are matched](site:pulp_nuget/docs/user/guides/acs/#how-packages-are-matched).
+
 ## Domains
 
 All endpoints, including the push/unlist publish endpoint, are domain-aware and operate

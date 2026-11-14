@@ -1,0 +1,3 @@
+Documented that an alternate content source supplies the file for package versions stored
+for the first time, in every repository of its domain, and that permission to create or
+change one should be granted accordingly.

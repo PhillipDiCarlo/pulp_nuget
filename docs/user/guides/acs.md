@@ -44,11 +44,19 @@ matched by **package id and version**. This relies on NuGet's rule that a publis
 package id and version can never be replaced with different contents; only add
 alternate sources you trust to hold the same packages as your remotes.
 
+Pulp cannot verify an ACS copy against the remote. For a package version that is not
+stored yet, the file the ACS returns is the file that gets stored and served. Only a copy
+that differs from a file Pulp already stores is caught: that sync fails and names the
+package.
+
 - **`immediate` syncs** download each package from the first ACS copy that succeeds,
   using that ACS remote's own credentials, proxy, and TLS settings, and fall back to
   the sync's remote.
 - **`on_demand` content** is streamed from an ACS copy first when a client requests
   it, falling back to the remote that synced it.
 
-ACSes apply to every sync in their domain. Deleting an ACS removes its index; syncs
-then download from their remotes again.
+ACSes apply to every sync in their domain, so permission to create or change one is
+permission to supply packages to every repository in it; see
+[Alternate content sources](site:pulp_nuget/docs/admin/guides/rbac/#alternate-content-sources)
+in the access control guide. Deleting an ACS removes its index; syncs then download from
+their remotes again.
